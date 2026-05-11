@@ -314,7 +314,8 @@ def shipment_new(
                 if order["status_code"] != "ready":
                     raise ValueError("Создавать отгрузку можно только для заказа со статусом «Готов».")
                 ensure_order_paid_for_shipping(conn, order_id_value)
-                if shipped_at_value and shipped_at_value < order["order_date"]:
+                order_date_value = order.get("order_date")
+                if shipped_at_value and order_date_value and shipped_at_value.date() < order_date_value.date():
                     raise ValueError("Дата отгрузки не может быть раньше даты заказа.")
                 cur.execute(
                     """
