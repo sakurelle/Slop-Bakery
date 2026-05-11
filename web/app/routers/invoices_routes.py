@@ -100,6 +100,34 @@ def validate_invoice_status_change(invoice: dict, new_status: str):
         raise ValueError("Недопустимый переход статуса счёта.")
 
 
+def update_invoice_status(conn, invoice_id: int, new_status: str):
+    with conn.cursor() as cur:
+        if new_status == "paid":
+            cur.execute(
+                """
+                UPDATE invoices
+                SET status_code = 'paid',
+                    paid_at = CURRENT_TIMESTAMP
+                WHERE invoice_id = %s
+                RETURNING invoice_id
+                """,
+                (invoice_id,),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE invoices
+                SET status_code = %s,
+                    paid_at = NULL
+                WHERE invoice_id = %s
+                RETURNING invoice_id
+                """,
+                (new_status, invoice_id),
+            )
+        if not cur.fetchone():
+            raise ValueError("Счёт не найден или недоступен для изменения.")
+
+
 @router.get("/invoices")
 def invoices_list(request: Request):
     user = authorize_section(request, "invoices")
@@ -281,29 +309,52 @@ def invoice_pay(request: Request, invoice_id: int):
     user = authorize_action(request, "invoices.pay_own", "У вас нет прав на оплату этого счёта.")
     if not isinstance(user, dict):
         return user
+
     invoice = fetch_invoice_for_user(invoice_id, user)
     if not invoice:
         return forbidden_response(request, "Счёт не найден или недоступен.")
+
     try:
+        if "client" not in user.get("roles", []):
+            return forbidden_response(request, "Оплачивать счёт через этот маршрут может только клиент.")
+        if invoice["customer_id"] != user.get("customer_id"):
+            return forbidden_response(request, "Нельзя оплатить чужой счёт.")
         if invoice["status_code"] == "paid":
             raise ValueError("Счёт уже оплачен.")
         if invoice["status_code"] not in {"issued", "overdue"}:
             raise ValueError("Этот счёт нельзя оплатить в текущем статусе.")
+
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    UPDATE invoices
-                    SET status_code = 'paid',
-                        paid_at = CURRENT_TIMESTAMP
-                    WHERE invoice_id = %s
+                    SELECT i.invoice_id, i.status_code, o.customer_id
+                    FROM invoices AS i
+                    JOIN customer_orders AS o ON o.order_id = i.order_id
+                    WHERE i.invoice_id = %s
+                    FOR UPDATE
                     """,
                     (invoice_id,),
                 )
+                locked_invoice = cur.fetchone()
+                if not locked_invoice:
+                    raise ValueError("Счёт не найден.")
+                if locked_invoice["customer_id"] != user.get("customer_id"):
+                    return forbidden_response(request, "Нельзя оплатить чужой счёт.")
+                if locked_invoice["status_code"] == "paid":
+                    raise ValueError("Счёт уже оплачен.")
+                if locked_invoice["status_code"] not in {"issued", "overdue"}:
+                    raise ValueError("Этот счёт нельзя оплатить в текущем статусе.")
+
+            update_invoice_status(conn, invoice_id, "paid")
+
         set_flash(request, "Счёт успешно оплачен.")
         return redirect_to("/invoices")
     except ValueError as exc:
         set_flash(request, str(exc), "danger")
+        return redirect_to("/invoices")
+    except PsycopgError:
+        set_flash(request, "Не удалось оплатить счёт. Попробуйте снова.", "danger")
         return redirect_to("/invoices")
 
 
@@ -346,17 +397,7 @@ def invoice_status_update(request: Request, invoice_id: int, status_code: str = 
             raise ValueError("Не выбран новый статус счёта.")
         validate_invoice_status_change(invoice, new_status)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            with conn.cursor() as cur:
-                if new_status == "paid":
-                    cur.execute(
-                        "UPDATE invoices SET status_code = %s, paid_at = CURRENT_TIMESTAMP WHERE invoice_id = %s",
-                        (new_status, invoice_id),
-                    )
-                else:
-                    cur.execute(
-                        "UPDATE invoices SET status_code = %s WHERE invoice_id = %s",
-                        (new_status, invoice_id),
-                    )
+            update_invoice_status(conn, invoice_id, new_status)
         set_flash(request, "Статус счёта успешно обновлён.")
         return redirect_to("/invoices")
     except ValueError as exc:

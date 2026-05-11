@@ -292,7 +292,10 @@ ALTER TABLE invoices
     ADD CONSTRAINT chk_invoices_number_not_blank CHECK (BTRIM(invoice_number) <> ''),
     ADD CONSTRAINT chk_invoices_amount CHECK (amount >= 0),
     ADD CONSTRAINT chk_invoices_due_date CHECK (due_date IS NULL OR due_date >= issue_date),
-    ADD CONSTRAINT chk_invoices_paid_at CHECK (paid_at IS NULL OR paid_at::DATE >= issue_date);
+    ADD CONSTRAINT chk_invoices_paid_at CHECK (
+        (status_code = 'paid' AND paid_at IS NOT NULL AND paid_at::DATE >= issue_date)
+        OR (status_code <> 'paid' AND paid_at IS NULL)
+    );
 
 ALTER TABLE shipments
     ALTER COLUMN shipment_number SET NOT NULL,
