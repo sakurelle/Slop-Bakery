@@ -4,13 +4,22 @@ from decimal import Decimal
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
-from ..database import fetch_all, get_db, next_id
+from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
+from ..database import fetch_all, fetch_one, get_db, next_id
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_datetime_local, parse_decimal, parse_int
 
 
 router = APIRouter()
+
+PRODUCTION_STATUS_TRANSITIONS = {
+    "planned": {"in_progress", "cancelled"},
+    "in_progress": {"completed", "cancelled"},
+    "completed": set(),
+    "cancelled": set(),
+}
+
+CREATABLE_PRODUCTION_STATUSES = {"planned", "in_progress", "completed"}
 
 
 def production_fields(products, tech_cards, users, statuses, data=None):
@@ -22,10 +31,151 @@ def production_fields(products, tech_cards, users, statuses, data=None):
         {"name": "shift", "label": "Смена", "type": "text", "value": data.get("shift", "")},
         {"name": "quantity_produced", "label": "Произведено", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity_produced", "")},
         {"name": "quantity_defective", "label": "Брак", "type": "number", "step": "0.001", "min": "0", "value": data.get("quantity_defective", "0")},
-        {"name": "responsible_user_id", "label": "Ответственный", "type": "select", "value": data.get("responsible_user_id", ""), "options": build_options(users, "user_id", "full_name", blank_label="Выберите пользователя")},
-        {"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": data.get("status_code", "completed"), "options": build_options(statuses, "status_code", "name")},
+        {"name": "responsible_user_id", "label": "Ответственный", "type": "select", "value": data.get("responsible_user_id", ""), "options": build_options(users, "user_id", "full_name", blank_label="Выберите технолога")},
+        {"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": data.get("status_code", "planned"), "options": build_options(statuses, "status_code", "name")},
         {"name": "note", "label": "Примечание", "type": "textarea", "value": data.get("note", "")},
     ]
+
+
+def production_status_fields(statuses, current_status):
+    return [
+        {
+            "name": "status_code",
+            "label": "Статус",
+            "type": "select",
+            "required": True,
+            "value": current_status,
+            "options": build_options(statuses, "status_code", "name"),
+        }
+    ]
+
+
+def fetch_production_batch(batch_id: int):
+    return fetch_one(
+        """
+        SELECT
+            pb.*,
+            p.name AS product_name,
+            tc.card_number
+        FROM production_batches AS pb
+        JOIN products AS p ON p.product_id = pb.product_id
+        JOIN tech_cards AS tc ON tc.tech_card_id = pb.tech_card_id
+        WHERE pb.production_batch_id = %s
+        """,
+        (batch_id,),
+    )
+
+
+def get_responsible_users():
+    return fetch_all(
+        """
+        SELECT DISTINCT u.user_id, u.full_name
+        FROM users AS u
+        JOIN user_roles AS ur ON ur.user_id = u.user_id
+        JOIN roles AS r ON r.role_id = ur.role_id
+        WHERE u.status_code = 'active'
+          AND r.role_code = 'technologist'
+        ORDER BY u.full_name
+        """
+    )
+
+
+def get_tech_cards():
+    return fetch_all(
+        """
+        SELECT tech_card_id, card_number || ' / v' || version::TEXT AS card_label
+        FROM tech_cards
+        WHERE status_code = 'active'
+        ORDER BY card_number, version DESC
+        """
+    )
+
+
+def get_create_statuses():
+    return fetch_all(
+        """
+        SELECT status_code, name
+        FROM production_statuses
+        WHERE status_code = ANY(%s)
+        ORDER BY name
+        """,
+        (sorted(CREATABLE_PRODUCTION_STATUSES),),
+    )
+
+
+def validate_responsible_user(conn, responsible_user_id: int | None):
+    if responsible_user_id is None:
+        return
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM users AS u
+            JOIN user_roles AS ur ON ur.user_id = u.user_id
+            JOIN roles AS r ON r.role_id = ur.role_id
+            WHERE u.user_id = %s
+              AND u.status_code = 'active'
+              AND r.role_code = 'technologist'
+            """,
+            (responsible_user_id,),
+        )
+        if not cur.fetchone():
+            raise ValueError("Ответственным за производство может быть только активный технолог.")
+
+
+def validate_tech_card(conn, tech_card_id: int, product_id: int, production_day: date):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                tc.tech_card_id,
+                tc.product_id,
+                tc.status_code,
+                tc.effective_from,
+                tc.effective_to,
+                p.shelf_life_days
+            FROM tech_cards AS tc
+            JOIN products AS p ON p.product_id = tc.product_id
+            WHERE tc.tech_card_id = %s
+            """,
+            (tech_card_id,),
+        )
+        tech_card = cur.fetchone()
+        if not tech_card:
+            raise ValueError("Выбранная техкарта не существует.")
+        if tech_card["product_id"] != product_id:
+            raise ValueError("Выбранные продукция и техкарта не связаны между собой.")
+        if tech_card["status_code"] != "active":
+            raise ValueError("Использовать можно только активную техкарту.")
+        if tech_card["effective_from"] > production_day:
+            raise ValueError("Техкарта ещё не действует на дату производства.")
+        if tech_card["effective_to"] and tech_card["effective_to"] < production_day:
+            raise ValueError("Срок действия техкарты истёк на дату производства.")
+        return tech_card
+
+
+def get_next_production_statuses(batch: dict) -> list[str]:
+    return sorted(PRODUCTION_STATUS_TRANSITIONS.get(batch["status_code"], set()))
+
+
+def fetch_production_status_options(batch: dict):
+    next_statuses = get_next_production_statuses(batch)
+    if not next_statuses:
+        return []
+    return fetch_all(
+        """
+        SELECT status_code, name
+        FROM production_statuses
+        WHERE status_code = ANY(%s)
+        ORDER BY name
+        """,
+        (next_statuses,),
+    )
+
+
+def validate_production_status_change(batch: dict, new_status: str):
+    if new_status not in PRODUCTION_STATUS_TRANSITIONS.get(batch["status_code"], set()):
+        raise ValueError("Недопустимый переход статуса производственной партии.")
 
 
 def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Decimal, production_day: date):
@@ -46,28 +196,37 @@ def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Deci
         )
         recipe_items = cur.fetchall()
         if not recipe_items:
-            raise ValueError("Для выбранной техкарты не задан состав рецепта.")
+            raise ValueError("Для выбранной техкарты не задан состав рецептуры.")
 
         consumptions = []
         for item in recipe_items:
             recipe_qty = Decimal(item["quantity"])
             waste_factor = Decimal("1") + (Decimal(item["waste_percent"]) / Decimal("100"))
             required_qty = produced_qty * recipe_qty * waste_factor
+
             cur.execute(
                 """
-                SELECT stock_id, quantity_current, expiry_date
-                FROM raw_material_stock
-                WHERE material_id = %s
-                  AND quantity_current > 0
-                  AND expiry_date >= %s
-                ORDER BY expiry_date, stock_id
+                SELECT
+                    rms.stock_id,
+                    rms.quantity_current,
+                    rms.expiry_date
+                FROM raw_material_stock AS rms
+                LEFT JOIN quality_checks AS qc
+                    ON qc.delivery_item_id = rms.delivery_item_id
+                   AND qc.check_type = 'raw_material'
+                   AND qc.result_code = 'failed'
+                WHERE rms.material_id = %s
+                  AND rms.quantity_current > 0
+                  AND rms.expiry_date >= %s
+                  AND qc.quality_check_id IS NULL
+                ORDER BY rms.expiry_date, rms.stock_id
                 """,
                 (item["material_id"], production_day),
             )
             stock_rows = cur.fetchall()
             available_qty = sum(Decimal(row["quantity_current"]) for row in stock_rows)
             if available_qty < required_qty:
-                raise ValueError(f"Недостаточно сырья «{item['material_name']}» для запуска производства.")
+                raise ValueError(f"Недостаточно доступного сырья «{item['material_name']}» для запуска производства.")
 
             remaining = required_qty
             allocations = []
@@ -78,9 +237,9 @@ def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Deci
                 take_qty = stock_qty if stock_qty <= remaining else remaining
                 allocations.append((row["stock_id"], take_qty))
                 remaining -= take_qty
-            consumptions.append((item["material_name"], required_qty, allocations))
+            consumptions.append(allocations)
 
-        for _material_name, _required_qty, allocations in consumptions:
+        for allocations in consumptions:
             for stock_id, take_qty in allocations:
                 cur.execute(
                     """
@@ -88,9 +247,57 @@ def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Deci
                     SET quantity_current = quantity_current - %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE stock_id = %s
+                      AND quantity_current >= %s
                     """,
-                    (take_qty, stock_id),
+                    (take_qty, stock_id, take_qty),
                 )
+                if cur.rowcount != 1:
+                    raise ValueError("Не удалось корректно списать сырьё со склада.")
+
+
+def finalize_production_batch(conn, batch: dict, tech_card: dict):
+    produced_qty = Decimal(batch["quantity_produced"])
+    defective_qty = Decimal(batch["quantity_defective"])
+    net_quantity = produced_qty - defective_qty
+    production_day = batch["production_date"].date()
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM finished_goods_stock
+            WHERE production_batch_id = %s
+            LIMIT 1
+            """,
+            (batch["production_batch_id"],),
+        )
+        if cur.fetchone():
+            raise ValueError("Эта производственная партия уже завершена и размещена на складе.")
+
+    consume_materials_for_production(conn, batch["tech_card_id"], produced_qty, production_day)
+
+    if net_quantity > 0:
+        finished_stock_id = next_id(conn, "finished_goods_stock", "finished_stock_id")
+        expiry_dt = production_day + timedelta(days=tech_card["shelf_life_days"])
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO finished_goods_stock (
+                    finished_stock_id, product_id, production_batch_id, batch_number,
+                    quantity_current, production_date, expiry_date
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    finished_stock_id,
+                    batch["product_id"],
+                    batch["production_batch_id"],
+                    batch["batch_number"],
+                    net_quantity,
+                    production_day,
+                    expiry_dt,
+                ),
+            )
 
 
 @router.get("/production")
@@ -115,6 +322,9 @@ def production_list(request: Request):
         ORDER BY pb.production_date DESC, pb.production_batch_id DESC
         """
     )
+    for row in rows:
+        if has_action(user, "production.change_status"):
+            row["_detail_url"] = f"/production/{row['production_batch_id']}/status"
     context = {
         "title": "Производство",
         "subtitle": "Журнал производственных партий готовой продукции.",
@@ -142,10 +352,17 @@ def production_new_page(request: Request):
     if not isinstance(user, dict):
         return user
     products = fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
-    tech_cards = fetch_all("SELECT tech_card_id, card_number || ' / ' || version::TEXT AS card_label FROM tech_cards WHERE status_code = 'active' ORDER BY card_number")
-    users = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
-    statuses = fetch_all("SELECT status_code, name FROM production_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": "Добавить производственную партию", "action": "/production/new", "fields": production_fields(products, tech_cards, users, statuses), "back_url": "/production", "submit_label": "Создать запись"})
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": "Добавить производственную партию",
+            "action": "/production/new",
+            "fields": production_fields(products, get_tech_cards(), get_responsible_users(), get_create_statuses()),
+            "back_url": "/production",
+            "submit_label": "Создать запись",
+        },
+    )
 
 
 @router.post("/production/new")
@@ -165,9 +382,9 @@ def production_new(
     if not isinstance(user, dict):
         return user
     products = fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
-    tech_cards = fetch_all("SELECT tech_card_id, card_number || ' / ' || version::TEXT AS card_label FROM tech_cards WHERE status_code = 'active' ORDER BY card_number")
-    users = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
-    statuses = fetch_all("SELECT status_code, name FROM production_statuses ORDER BY name")
+    tech_cards = get_tech_cards()
+    responsible_users = get_responsible_users()
+    statuses = get_create_statuses()
     form_data = {"product_id": product_id, "tech_card_id": tech_card_id, "production_date": production_date, "shift": shift, "quantity_produced": quantity_produced, "quantity_defective": quantity_defective, "responsible_user_id": responsible_user_id, "status_code": status_code, "note": note}
     try:
         production_dt = parse_datetime_local(production_date, "Дата производства")
@@ -183,30 +400,17 @@ def production_new(
         product_id_value = parse_int(product_id, "Продукция")
         tech_card_id_value = parse_int(tech_card_id, "Техкарта")
         responsible_user_id_value = parse_int(responsible_user_id, "Ответственный", allow_none=True)
-        net_quantity = produced_qty - defective_qty
-        if net_quantity < 0:
-            raise ValueError("Некорректный расчёт остатка готовой продукции.")
+        status_value = clean_text(status_code)
+        if status_value not in CREATABLE_PRODUCTION_STATUSES:
+            raise ValueError("Недопустимый стартовый статус производственной партии.")
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            validate_responsible_user(conn, responsible_user_id_value)
+            tech_card = validate_tech_card(conn, tech_card_id_value, product_id_value, production_dt.date())
+
             production_batch_id = next_id(conn, "production_batches", "production_batch_id")
             batch_number = f"PB-WEB-{production_batch_id:04d}"
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT p.shelf_life_days, tc.product_id
-                    FROM tech_cards AS tc
-                    JOIN products AS p ON p.product_id = tc.product_id
-                    WHERE tc.tech_card_id = %s
-                      AND tc.product_id = %s
-                    """,
-                    (tech_card_id_value, product_id_value),
-                )
-                product_row = cur.fetchone()
-                if not product_row:
-                    raise ValueError("Выбранные продукция и техкарта не связаны между собой.")
-
-                consume_materials_for_production(conn, tech_card_id_value, produced_qty, production_dt.date())
-
                 cur.execute(
                     """
                     INSERT INTO production_batches (
@@ -225,36 +429,126 @@ def production_new(
                         produced_qty,
                         defective_qty,
                         responsible_user_id_value,
-                        clean_text(status_code),
+                        status_value,
                         clean_text(note),
                     ),
                 )
 
-                if net_quantity > 0:
-                    finished_stock_id = next_id(conn, "finished_goods_stock", "finished_stock_id")
-                    expiry_dt = production_dt.date() + timedelta(days=product_row["shelf_life_days"])
-                    cur.execute(
-                        """
-                        INSERT INTO finished_goods_stock (
-                            finished_stock_id, product_id, production_batch_id, batch_number,
-                            quantity_current, production_date, expiry_date
-                        )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        """,
-                        (
-                            finished_stock_id,
-                            product_id_value,
-                            production_batch_id,
-                            batch_number,
-                            net_quantity,
-                            production_dt.date(),
-                            expiry_dt,
-                        ),
-                    )
-        set_flash(request, "Производственная партия успешно создана, сырьё списано, остаток готовой продукции обновлён.")
+            if status_value == "completed":
+                finalize_production_batch(
+                    conn,
+                    {
+                        "production_batch_id": production_batch_id,
+                        "batch_number": batch_number,
+                        "product_id": product_id_value,
+                        "tech_card_id": tech_card_id_value,
+                        "production_date": production_dt,
+                        "quantity_produced": produced_qty,
+                        "quantity_defective": defective_qty,
+                    },
+                    tech_card,
+                )
+
+        if status_value == "completed":
+            set_flash(request, "Производственная партия завершена: сырьё списано, готовая продукция добавлена на склад.")
+        else:
+            set_flash(request, "Производственная партия создана без движения складских остатков до завершения.")
         return redirect_to("/production")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Добавить производственную партию", "action": "/production/new", "fields": production_fields(products, tech_cards, users, statuses, form_data), "back_url": "/production", "submit_label": "Создать запись", "error_message": str(exc)}, status_code=400)
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось сохранить производственную партию."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": "Добавить производственную партию",
+            "action": "/production/new",
+            "fields": production_fields(products, tech_cards, responsible_users, statuses, form_data),
+            "back_url": "/production",
+            "submit_label": "Создать запись",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
+
+
+@router.get("/production/{production_batch_id}/status")
+def production_status_page(request: Request, production_batch_id: int):
+    user = authorize_action(request, "production.change_status", "У вас нет прав на изменение статуса производства.")
+    if not isinstance(user, dict):
+        return user
+    batch = fetch_production_batch(production_batch_id)
+    if not batch:
+        return render_template(request, "error.html", {"title": "Партия не найдена", "message": "Карточка производственной партии не найдена."}, status_code=404)
+    statuses = fetch_production_status_options(batch)
+    if not statuses:
+        return forbidden_response(request, "Для текущего статуса производственной партии нет допустимых переходов.")
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Изменить статус партии #{production_batch_id}",
+            "action": f"/production/{production_batch_id}/status",
+            "fields": production_status_fields(statuses, statuses[0]["status_code"]),
+            "back_url": "/production",
+            "submit_label": "Обновить статус",
+        },
+    )
+
+
+@router.post("/production/{production_batch_id}/status")
+def production_status_update(request: Request, production_batch_id: int, status_code: str = Form(...)):
+    user = authorize_action(request, "production.change_status", "У вас нет прав на изменение статуса производства.")
+    if not isinstance(user, dict):
+        return user
+    batch = fetch_production_batch(production_batch_id)
+    if not batch:
+        return render_template(request, "error.html", {"title": "Партия не найдена", "message": "Карточка производственной партии не найдена."}, status_code=404)
+    statuses = fetch_production_status_options(batch)
+    try:
+        new_status = clean_text(status_code)
+        if not new_status:
+            raise ValueError("Не выбран новый статус производственной партии.")
+        validate_production_status_change(batch, new_status)
+
+        with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            validate_responsible_user(conn, batch["responsible_user_id"])
+            tech_card = validate_tech_card(conn, batch["tech_card_id"], batch["product_id"], batch["production_date"].date())
+
+            if new_status == "completed":
+                finalize_production_batch(conn, batch, tech_card)
+
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE production_batches SET status_code = %s WHERE production_batch_id = %s",
+                    (new_status, production_batch_id),
+                )
+
+        if new_status == "completed":
+            set_flash(request, "Партия завершена: сырьё списано, готовая продукция добавлена на склад.")
+        else:
+            set_flash(request, "Статус производственной партии обновлён.")
+        return redirect_to("/production")
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось изменить статус производственной партии."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Изменить статус партии #{production_batch_id}",
+            "action": f"/production/{production_batch_id}/status",
+            "fields": production_status_fields(statuses, clean_text(status_code) or batch["status_code"]),
+            "back_url": "/production",
+            "submit_label": "Обновить статус",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
 
 
 @router.get("/finished-stock")

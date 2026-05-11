@@ -27,13 +27,36 @@ def products_list(request: Request):
     user = authorize_section(request, "products")
     if not isinstance(user, dict):
         return user
-    rows = fetch_all(
-        """
-        SELECT product_id, name, category, unit, price, shelf_life_days, is_active
-        FROM products
-        ORDER BY product_id
-        """
-    )
+    if "client" in user.get("roles", []):
+        rows = fetch_all(
+            """
+            SELECT
+                p.product_id,
+                p.name,
+                p.category,
+                p.unit,
+                p.price,
+                p.shelf_life_days,
+                p.is_active,
+                COALESCE(SUM(fgs.quantity_current), 0) AS quantity_available
+            FROM products AS p
+            LEFT JOIN finished_goods_stock AS fgs
+                ON fgs.product_id = p.product_id
+               AND fgs.quantity_current > 0
+               AND fgs.expiry_date >= CURRENT_DATE
+            WHERE p.is_active = TRUE
+            GROUP BY p.product_id, p.name, p.category, p.unit, p.price, p.shelf_life_days, p.is_active
+            ORDER BY p.product_id
+            """
+        )
+    else:
+        rows = fetch_all(
+            """
+            SELECT product_id, name, category, unit, price, shelf_life_days, is_active
+            FROM products
+            ORDER BY product_id
+            """
+        )
     for row in rows:
         row["_detail_url"] = f"/products/{row['product_id']}"
     context = {
@@ -50,6 +73,8 @@ def products_list(request: Request):
         ],
         "rows": rows,
     }
+    if "client" in user.get("roles", []):
+        context["headers"].append(("quantity_available", "Доступно"))
     if has_action(user, "products.manage"):
         context["create_url"] = "/products/new"
         context["create_label"] = "Добавить продукцию"
@@ -61,11 +86,7 @@ def product_new_page(request: Request):
     user = authorize_action(request, "products.manage", "У вас нет прав на управление продукцией.")
     if not isinstance(user, dict):
         return user
-    return render_template(
-        request,
-        "form.html",
-        {"title": "Добавить продукцию", "action": "/products/new", "fields": product_fields(), "back_url": "/products", "submit_label": "Создать запись"},
-    )
+    return render_template(request, "form.html", {"title": "Добавить продукцию", "action": "/products/new", "fields": product_fields(), "back_url": "/products", "submit_label": "Создать запись"})
 
 
 @router.post("/products/new")
@@ -98,13 +119,11 @@ def product_new(
                 )
         set_flash(request, "Продукция успешно добавлена.")
         return redirect_to("/products")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(
-            request,
-            "form.html",
-            {"title": "Добавить продукцию", "action": "/products/new", "fields": product_fields(form_data), "back_url": "/products", "submit_label": "Создать запись", "error_message": str(exc)},
-            status_code=400,
-        )
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось добавить продукцию."
+    return render_template(request, "form.html", {"title": "Добавить продукцию", "action": "/products/new", "fields": product_fields(form_data), "back_url": "/products", "submit_label": "Создать запись", "error_message": error_message}, status_code=400)
 
 
 @router.get("/products/{product_id}")
@@ -112,18 +131,55 @@ def product_detail(request: Request, product_id: int):
     user = authorize_section(request, "products")
     if not isinstance(user, dict):
         return user
-    product = fetch_one("SELECT * FROM products WHERE product_id = %s", (product_id,))
+    if "client" in user.get("roles", []):
+        product = fetch_one(
+            """
+            SELECT
+                p.product_id,
+                p.name,
+                p.category,
+                p.unit,
+                p.price,
+                p.shelf_life_days,
+                p.is_active,
+                COALESCE(SUM(fgs.quantity_current), 0) AS quantity_available
+            FROM products AS p
+            LEFT JOIN finished_goods_stock AS fgs
+                ON fgs.product_id = p.product_id
+               AND fgs.quantity_current > 0
+               AND fgs.expiry_date >= CURRENT_DATE
+            WHERE p.product_id = %s
+              AND p.is_active = TRUE
+            GROUP BY p.product_id, p.name, p.category, p.unit, p.price, p.shelf_life_days, p.is_active
+            """,
+            (product_id,),
+        )
+    else:
+        product = fetch_one("SELECT * FROM products WHERE product_id = %s", (product_id,))
     if not product:
         return render_template(request, "error.html", {"title": "Продукция не найдена", "message": "Карточка продукции не найдена."}, status_code=404)
-    tech_cards = fetch_all(
-        """
-        SELECT tech_card_id, card_number, version, status_code, effective_from, effective_to
-        FROM tech_cards
-        WHERE product_id = %s
-        ORDER BY version DESC
-        """,
-        (product_id,),
-    )
+    tech_cards = []
+    if "client" not in user.get("roles", []):
+        tech_cards = fetch_all(
+            """
+            SELECT tech_card_id, card_number, version, status_code, effective_from, effective_to
+            FROM tech_cards
+            WHERE product_id = %s
+            ORDER BY version DESC
+            """,
+            (product_id,),
+        )
+    details = [
+        ("ID", product["product_id"]),
+        ("Категория", product["category"]),
+        ("Единица измерения", product["unit"]),
+        ("Цена", product["price"]),
+        ("Срок годности, дней", product["shelf_life_days"]),
+        ("Доступно", product.get("quantity_available")),
+        ("Активна", product["is_active"]),
+    ]
+    if "client" not in user.get("roles", []):
+        details.insert(-1, ("Создана", product["created_at"]))
     return render_template(
         request,
         "detail.html",
@@ -131,16 +187,8 @@ def product_detail(request: Request, product_id: int):
             "title": product["name"],
             "back_url": "/products",
             "edit_url": f"/products/{product_id}/edit" if has_action(user, "products.manage") else None,
-            "details": [
-                ("ID", product["product_id"]),
-                ("Категория", product["category"]),
-                ("Единица измерения", product["unit"]),
-                ("Цена", product["price"]),
-                ("Срок годности, дней", product["shelf_life_days"]),
-                ("Создана", product["created_at"]),
-                ("Активна", product["is_active"]),
-            ],
-            "sections": [
+            "details": details,
+            "sections": [] if "client" in user.get("roles", []) else [
                 {
                     "title": "Технологические карты",
                     "headers": [("tech_card_id", "ID"), ("card_number", "Номер карты"), ("version", "Версия"), ("status_code", "Статус"), ("effective_from", "Действует с"), ("effective_to", "Действует до")],
@@ -160,11 +208,7 @@ def product_edit_page(request: Request, product_id: int):
     product = fetch_one("SELECT * FROM products WHERE product_id = %s", (product_id,))
     if not product:
         return render_template(request, "error.html", {"title": "Продукция не найдена", "message": "Карточка продукции не найдена."}, status_code=404)
-    return render_template(
-        request,
-        "form.html",
-        {"title": f"Редактировать продукцию #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(product), "back_url": f"/products/{product_id}", "submit_label": "Сохранить изменения"},
-    )
+    return render_template(request, "form.html", {"title": f"Редактировать продукцию #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(product), "back_url": f"/products/{product_id}", "submit_label": "Сохранить изменения"})
 
 
 @router.post("/products/{product_id}/edit")
@@ -203,10 +247,8 @@ def product_edit(
                 )
         set_flash(request, "Данные продукции успешно обновлены.")
         return redirect_to(f"/products/{product_id}")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(
-            request,
-            "form.html",
-            {"title": f"Редактировать продукцию #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(form_data), "back_url": f"/products/{product_id}", "submit_label": "Сохранить изменения", "error_message": str(exc)},
-            status_code=400,
-        )
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось обновить продукцию."
+    return render_template(request, "form.html", {"title": f"Редактировать продукцию #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(form_data), "back_url": f"/products/{product_id}", "submit_label": "Сохранить изменения", "error_message": error_message}, status_code=400)

@@ -167,6 +167,17 @@ def record_login(user: dict, client_ip: str | None) -> None:
             )
 
 
+def record_login_attempt(username: str, client_ip: str | None, success: bool) -> None:
+    user = get_user_by_username(username)
+    user_id = user["user_id"] if user else None
+    with get_db(user_id=user_id, user_ip=client_ip) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT log_auth_event(%s, %s, %s, %s)",
+                (user_id, "LOGIN", client_ip, success),
+            )
+
+
 def logout_user(request: Request) -> None:
     user = get_current_user(request)
     if user:

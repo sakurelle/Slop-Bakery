@@ -3,8 +3,12 @@
 {% block content %}
 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end mb-4 gap-3">
     <div>
-        <h1 class="h2 mb-1">Главная</h1>
-        <p class="text-secondary mb-0">Сводка по работе базы данных хлебозавода и журналу аудита.</p>
+        <h1 class="h2 mb-1">{{ title }}</h1>
+        {% if is_client_dashboard %}
+        <p class="text-secondary mb-0">Личный кабинет клиента со статусами заказов, счетами, отгрузками и доступной продукцией.</p>
+        {% else %}
+        <p class="text-secondary mb-0">Сводка по работе базы данных хлебозавода.</p>
+        {% endif %}
     </div>
     <div class="dashboard-user-chip">
         <span class="small text-uppercase">Текущий пользователь</span>
@@ -12,6 +16,101 @@
     </div>
 </div>
 
+{% if is_client_dashboard %}
+<div class="row g-3 mb-4">
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Мои заказы</span><strong>{{ stats.order_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Мои счета</span><strong>{{ stats.invoice_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Мои отгрузки</span><strong>{{ stats.shipment_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Доступная продукция</span><strong>{{ stats.product_count }}</strong></div></div>
+</div>
+
+<div class="row g-4">
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><strong>Мои заказы</strong></div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead><tr><th>Заказ</th><th>Статус</th><th>Дата</th></tr></thead>
+                    <tbody>
+                    {% for row in recent_orders %}
+                        <tr>
+                            <td>{{ row.order_number }}</td>
+                            <td>{{ display_value('status_code', row.status_code) }}</td>
+                            <td>{{ row.order_date }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="text-secondary">У вас пока нет заказов.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><strong>Мои счета</strong></div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead><tr><th>Счёт</th><th>Сумма</th><th>Статус</th></tr></thead>
+                    <tbody>
+                    {% for row in recent_invoices %}
+                        <tr>
+                            <td>{{ row.invoice_number }}</td>
+                            <td>{{ row.amount }}</td>
+                            <td>{{ display_value('status_code', row.status_code) }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="text-secondary">Счета пока отсутствуют.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><strong>Мои отгрузки</strong></div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead><tr><th>Отгрузка</th><th>Статус</th><th>Дата</th></tr></thead>
+                    <tbody>
+                    {% for row in recent_shipments %}
+                        <tr>
+                            <td>{{ row.shipment_number }}</td>
+                            <td>{{ display_value('status_code', row.status_code) }}</td>
+                            <td>{{ row.shipped_at }}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="text-secondary">Отгрузки пока отсутствуют.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-lg-6">
+        <div class="card shadow-sm h-100">
+            <div class="card-header"><strong>Доступная продукция</strong></div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead><tr><th>Продукция</th><th>Цена</th><th>В наличии</th></tr></thead>
+                    <tbody>
+                    {% for row in available_products %}
+                        <tr>
+                            <td>{{ row.name }}</td>
+                            <td>{{ row.price }}</td>
+                            <td>{% if row.quantity_available > 0 %}{{ row.quantity_available }} {{ row.unit }}{% else %}нет в наличии{% endif %}</td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="3" class="text-secondary">Доступной продукции пока нет.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% else %}
 <div class="row g-3 mb-4">
     <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Клиенты</span><strong>{{ stats.customer_count }}</strong></div></div>
     <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Заказы</span><strong>{{ stats.order_count }}</strong></div></div>
@@ -44,6 +143,7 @@
             </div>
         </div>
     </div>
+    {% if recent_audit %}
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
             <div class="card-header"><strong>Последние события аудита</strong></div>
@@ -66,6 +166,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
     {% if admin_users %}
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
@@ -108,4 +209,5 @@
     </div>
     {% endif %}
 </div>
+{% endif %}
 {% endblock %}

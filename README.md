@@ -153,6 +153,7 @@
 
 1. Скопировать `configuration/.env.example` в `configuration/.env`.
 2. При необходимости изменить значения подключения, `APP_SECRET_KEY`, `WEB_PORT` и внешний порт PostgreSQL `POSTGRES_PORT`.
+   Для реального или учебного демонстрационного запуска вне локального шаблона замените `APP_SECRET_KEY` на случайную строку и не оставляйте значение `change_me_session_key`.
 3. Поднять сервисы:
 
 ```bash

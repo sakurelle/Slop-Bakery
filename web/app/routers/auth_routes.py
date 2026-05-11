@@ -6,6 +6,7 @@ from ..auth import (
     login_user,
     logout_user,
     record_login,
+    record_login_attempt,
     redirect_to,
     render_template,
     set_flash,
@@ -30,6 +31,7 @@ def login_submit(
 ):
     user = authenticate_user(username.strip(), password)
     if not user:
+        record_login_attempt(username.strip(), request.client.host if request.client else None, False)
         return render_template(
             request,
             "login.html",

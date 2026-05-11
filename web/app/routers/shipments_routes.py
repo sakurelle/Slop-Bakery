@@ -11,13 +11,19 @@ from ..utils import build_options, clean_text, parse_datetime_local, parse_decim
 
 router = APIRouter()
 
+SHIPMENT_STATUS_TRANSITIONS = {
+    "planned": {"shipped", "cancelled"},
+    "shipped": {"delivered"},
+    "delivered": set(),
+    "cancelled": set(),
+}
 
-def shipment_fields(orders, statuses, data=None):
+
+def shipment_fields(orders, data=None):
     data = data or {}
     return [
         {"name": "order_id", "label": "Заказ", "type": "select", "required": True, "value": data.get("order_id", ""), "options": build_options(orders, "order_id", "display_name")},
         {"name": "shipped_at", "label": "Дата отгрузки", "type": "datetime-local", "value": data.get("shipped_at", "")},
-        {"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": data.get("status_code", "planned"), "options": build_options(statuses, "status_code", "name")},
         {"name": "delivery_address", "label": "Адрес доставки", "type": "textarea", "required": True, "value": data.get("delivery_address", "")},
         {"name": "waybill_number", "label": "Номер накладной", "type": "text", "value": data.get("waybill_number", "")},
         {"name": "note", "label": "Примечание", "type": "textarea", "value": data.get("note", "")},
@@ -30,6 +36,19 @@ def shipment_item_fields(order_items, finished_stock, data=None):
         {"name": "order_item_id", "label": "Позиция заказа", "type": "select", "required": True, "value": data.get("order_item_id", ""), "options": build_options(order_items, "order_item_id", "display_name")},
         {"name": "finished_stock_id", "label": "Партия готовой продукции", "type": "select", "required": True, "value": data.get("finished_stock_id", ""), "options": build_options(finished_stock, "finished_stock_id", "display_name")},
         {"name": "quantity", "label": "Количество", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
+    ]
+
+
+def shipment_status_fields(statuses, current_status):
+    return [
+        {
+            "name": "status_code",
+            "label": "Статус",
+            "type": "select",
+            "required": True,
+            "value": current_status,
+            "options": build_options(statuses, "status_code", "name"),
+        }
     ]
 
 
@@ -50,11 +69,23 @@ def fetch_shipment_for_user(shipment_id: int, user: dict):
     return fetch_one(query, tuple(params))
 
 
+def get_shippable_orders():
+    return fetch_all(
+        """
+        SELECT order_id, order_number || ' / ' || status_code AS display_name
+        FROM customer_orders
+        WHERE status_code = 'ready'
+        ORDER BY order_id DESC
+        """
+    )
+
+
 def fetch_shipment_item_form_data(order_id: int):
     order_items = fetch_all(
         """
         SELECT
             oi.order_item_id,
+            oi.product_id,
             p.name || ' / заказано ' || oi.quantity::TEXT AS display_name
         FROM order_items AS oi
         JOIN products AS p ON p.product_id = oi.product_id
@@ -67,15 +98,53 @@ def fetch_shipment_item_form_data(order_id: int):
         """
         SELECT
             fgs.finished_stock_id,
+            fgs.product_id,
             p.name || ' / ' || fgs.batch_number || ' / остаток ' || fgs.quantity_current::TEXT AS display_name
         FROM finished_goods_stock AS fgs
         JOIN products AS p ON p.product_id = fgs.product_id
         WHERE fgs.quantity_current > 0
           AND fgs.expiry_date >= CURRENT_DATE
+          AND fgs.product_id IN (
+              SELECT product_id
+              FROM order_items
+              WHERE order_id = %s
+          )
+          AND NOT EXISTS (
+              SELECT 1
+              FROM quality_checks AS qc
+              WHERE qc.production_batch_id = fgs.production_batch_id
+                AND qc.check_type = 'finished_product'
+                AND qc.result_code = 'failed'
+          )
         ORDER BY fgs.expiry_date, fgs.finished_stock_id
-        """
+        """,
+        (order_id,),
     )
     return order_items, finished_stock
+
+
+def get_next_shipment_statuses(shipment: dict) -> list[str]:
+    return sorted(SHIPMENT_STATUS_TRANSITIONS.get(shipment["status_code"], set()))
+
+
+def fetch_shipment_status_options(shipment: dict):
+    next_statuses = get_next_shipment_statuses(shipment)
+    if not next_statuses:
+        return []
+    return fetch_all(
+        """
+        SELECT status_code, name
+        FROM shipment_statuses
+        WHERE status_code = ANY(%s)
+        ORDER BY name
+        """,
+        (next_statuses,),
+    )
+
+
+def validate_shipment_status_change(shipment: dict, new_status: str):
+    if new_status not in SHIPMENT_STATUS_TRANSITIONS.get(shipment["status_code"], set()):
+        raise ValueError("Недопустимый переход статуса отгрузки.")
 
 
 @router.get("/shipments")
@@ -126,16 +195,17 @@ def shipment_new_page(request: Request):
     user = authorize_action(request, "shipments.create", "У вас нет прав на создание отгрузок.")
     if not isinstance(user, dict):
         return user
-    orders = fetch_all(
-        """
-        SELECT order_id, order_number || ' / ' || status_code AS display_name
-        FROM customer_orders
-        WHERE status_code IN ('ready', 'shipped')
-        ORDER BY order_id DESC
-        """
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": "Создать отгрузку",
+            "action": "/shipments/new",
+            "fields": shipment_fields(get_shippable_orders()),
+            "back_url": "/shipments",
+            "submit_label": "Создать отгрузку",
+        },
     )
-    statuses = fetch_all("SELECT status_code, name FROM shipment_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": "Создать отгрузку", "action": "/shipments/new", "fields": shipment_fields(orders, statuses), "back_url": "/shipments", "submit_label": "Создать отгрузку"})
 
 
 @router.post("/shipments/new")
@@ -143,7 +213,6 @@ def shipment_new(
     request: Request,
     order_id: str = Form(...),
     shipped_at: str = Form(""),
-    status_code: str = Form(...),
     delivery_address: str = Form(...),
     waybill_number: str = Form(""),
     note: str = Form(""),
@@ -151,16 +220,8 @@ def shipment_new(
     user = authorize_action(request, "shipments.create", "У вас нет прав на создание отгрузок.")
     if not isinstance(user, dict):
         return user
-    orders = fetch_all(
-        """
-        SELECT order_id, order_number || ' / ' || status_code AS display_name
-        FROM customer_orders
-        WHERE status_code IN ('ready', 'shipped')
-        ORDER BY order_id DESC
-        """
-    )
-    statuses = fetch_all("SELECT status_code, name FROM shipment_statuses ORDER BY name")
-    form_data = {"order_id": order_id, "shipped_at": shipped_at, "status_code": status_code, "delivery_address": delivery_address, "waybill_number": waybill_number, "note": note}
+    orders = get_shippable_orders()
+    form_data = {"order_id": order_id, "shipped_at": shipped_at, "delivery_address": delivery_address, "waybill_number": waybill_number, "note": note}
     try:
         order_id_value = parse_int(order_id, "Заказ")
         shipped_at_value = parse_datetime_local(shipped_at, "Дата отгрузки", allow_none=True)
@@ -168,12 +229,19 @@ def shipment_new(
             shipment_id = next_id(conn, "shipments", "shipment_id")
             shipment_number = f"SHP-WEB-{shipment_id:04d}"
             with conn.cursor() as cur:
-                cur.execute("SELECT order_date, status_code FROM customer_orders WHERE order_id = %s", (order_id_value,))
+                cur.execute(
+                    """
+                    SELECT order_date, status_code
+                    FROM customer_orders
+                    WHERE order_id = %s
+                    """,
+                    (order_id_value,),
+                )
                 order = cur.fetchone()
                 if not order:
                     raise ValueError("Выбранный заказ не существует.")
-                if order["status_code"] not in {"ready", "shipped"}:
-                    raise ValueError("Создавать отгрузку можно только для заказа, готового к отгрузке.")
+                if order["status_code"] != "ready":
+                    raise ValueError("Создавать отгрузку можно только для заказа со статусом «Готов».")
                 if shipped_at_value and shipped_at_value < order["order_date"]:
                     raise ValueError("Дата отгрузки не может быть раньше даты заказа.")
                 cur.execute(
@@ -189,17 +257,33 @@ def shipment_new(
                         shipment_number,
                         order_id_value,
                         shipped_at_value,
-                        clean_text(status_code),
+                        "planned",
                         clean_text(delivery_address),
                         clean_text(waybill_number),
                         user["user_id"],
                         clean_text(note),
                     ),
                 )
-        set_flash(request, "Отгрузка создана. Теперь можно добавить её состав.")
+        set_flash(request, "Отгрузка создана со статусом «Запланирована». Теперь можно добавить её состав.")
         return redirect_to(f"/shipments/{shipment_id}")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Создать отгрузку", "action": "/shipments/new", "fields": shipment_fields(orders, statuses, form_data), "back_url": "/shipments", "submit_label": "Создать отгрузку", "error_message": str(exc)}, status_code=400)
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось создать отгрузку."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": "Создать отгрузку",
+            "action": "/shipments/new",
+            "fields": shipment_fields(orders, form_data),
+            "back_url": "/shipments",
+            "submit_label": "Создать отгрузку",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
 
 
 @router.get("/shipments/{shipment_id}")
@@ -226,9 +310,9 @@ def shipment_detail(request: Request, shipment_id: int):
         (shipment_id,),
     )
     extra_actions = []
-    if has_action(user, "shipments.add_item"):
+    if has_action(user, "shipments.add_item") and shipment["status_code"] == "planned":
         extra_actions.append({"label": "Добавить позицию", "url": f"/shipments/{shipment_id}/items/new"})
-    if has_action(user, "shipments.change_status"):
+    if has_action(user, "shipments.change_status") and get_next_shipment_statuses(shipment):
         extra_actions.append({"label": "Изменить статус", "url": f"/shipments/{shipment_id}/status"})
     return render_template(
         request,
@@ -266,8 +350,20 @@ def shipment_item_new_page(request: Request, shipment_id: int):
     shipment = fetch_shipment_for_user(shipment_id, user)
     if not shipment:
         return render_template(request, "error.html", {"title": "Отгрузка не найдена", "message": "Карточка отгрузки не найдена."}, status_code=404)
+    if shipment["status_code"] != "planned":
+        return forbidden_response(request, "Добавлять позиции можно только в запланированную отгрузку.")
     order_items, finished_stock = fetch_shipment_item_form_data(shipment["order_id"])
-    return render_template(request, "form.html", {"title": f"Добавить позицию в отгрузку #{shipment_id}", "action": f"/shipments/{shipment_id}/items/new", "fields": shipment_item_fields(order_items, finished_stock), "back_url": f"/shipments/{shipment_id}", "submit_label": "Добавить позицию"})
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Добавить позицию в отгрузку #{shipment_id}",
+            "action": f"/shipments/{shipment_id}/items/new",
+            "fields": shipment_item_fields(order_items, finished_stock),
+            "back_url": f"/shipments/{shipment_id}",
+            "submit_label": "Добавить позицию",
+        },
+    )
 
 
 @router.post("/shipments/{shipment_id}/items/new")
@@ -286,6 +382,8 @@ def shipment_item_new(
         return render_template(request, "error.html", {"title": "Отгрузка не найдена", "message": "Карточка отгрузки не найдена."}, status_code=404)
     order_items, finished_stock = fetch_shipment_item_form_data(shipment["order_id"])
     form_data = {"order_item_id": order_item_id, "finished_stock_id": finished_stock_id, "quantity": quantity}
+    if shipment["status_code"] != "planned":
+        return forbidden_response(request, "Добавлять позиции можно только в запланированную отгрузку.")
     try:
         order_item_id_value = parse_int(order_item_id, "Позиция заказа")
         finished_stock_id_value = parse_int(finished_stock_id, "Партия готовой продукции")
@@ -310,9 +408,14 @@ def shipment_item_new(
 
                 cur.execute(
                     """
-                    SELECT finished_stock_id, product_id, quantity_current, expiry_date
-                    FROM finished_goods_stock
-                    WHERE finished_stock_id = %s
+                    SELECT
+                        fgs.finished_stock_id,
+                        fgs.product_id,
+                        fgs.quantity_current,
+                        fgs.expiry_date,
+                        fgs.production_batch_id
+                    FROM finished_goods_stock AS fgs
+                    WHERE fgs.finished_stock_id = %s
                     """,
                     (finished_stock_id_value,),
                 )
@@ -325,6 +428,20 @@ def shipment_item_new(
                     raise ValueError("Нельзя отгружать просроченную партию готовой продукции.")
                 if stock["quantity_current"] < quantity_value:
                     raise ValueError("На складе недостаточно готовой продукции для отгрузки.")
+
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM quality_checks
+                    WHERE production_batch_id = %s
+                      AND check_type = 'finished_product'
+                      AND result_code = 'failed'
+                    LIMIT 1
+                    """,
+                    (stock["production_batch_id"],),
+                )
+                if cur.fetchone():
+                    raise ValueError("Нельзя отгружать партию готовой продукции с проваленной проверкой качества.")
 
                 cur.execute(
                     """
@@ -360,13 +477,32 @@ def shipment_item_new(
                     SET quantity_current = quantity_current - %s,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE finished_stock_id = %s
+                      AND quantity_current >= %s
                     """,
-                    (quantity_value, finished_stock_id_value),
+                    (quantity_value, finished_stock_id_value, quantity_value),
                 )
+                if cur.rowcount != 1:
+                    raise ValueError("Не удалось списать готовую продукцию со склада.")
         set_flash(request, "Позиция отгрузки успешно добавлена, остаток готовой продукции уменьшен.")
         return redirect_to(f"/shipments/{shipment_id}")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Добавить позицию в отгрузку #{shipment_id}", "action": f"/shipments/{shipment_id}/items/new", "fields": shipment_item_fields(order_items, finished_stock, form_data), "back_url": f"/shipments/{shipment_id}", "submit_label": "Добавить позицию", "error_message": str(exc)}, status_code=400)
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось сохранить позицию отгрузки."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Добавить позицию в отгрузку #{shipment_id}",
+            "action": f"/shipments/{shipment_id}/items/new",
+            "fields": shipment_item_fields(order_items, finished_stock, form_data),
+            "back_url": f"/shipments/{shipment_id}",
+            "submit_label": "Добавить позицию",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
 
 
 @router.get("/shipments/{shipment_id}/status")
@@ -377,8 +513,20 @@ def shipment_status_page(request: Request, shipment_id: int):
     shipment = fetch_shipment_for_user(shipment_id, user)
     if not shipment:
         return render_template(request, "error.html", {"title": "Отгрузка не найдена", "message": "Карточка отгрузки не найдена."}, status_code=404)
-    statuses = fetch_all("SELECT status_code, name FROM shipment_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Изменить статус отгрузки #{shipment_id}", "action": f"/shipments/{shipment_id}/status", "fields": [{"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": shipment['status_code'], "options": build_options(statuses, 'status_code', 'name')}], "back_url": f"/shipments/{shipment_id}", "submit_label": "Обновить статус"})
+    statuses = fetch_shipment_status_options(shipment)
+    if not statuses:
+        return forbidden_response(request, "Для текущего статуса отгрузки нет допустимых переходов.")
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Изменить статус отгрузки #{shipment_id}",
+            "action": f"/shipments/{shipment_id}/status",
+            "fields": shipment_status_fields(statuses, statuses[0]["status_code"]),
+            "back_url": f"/shipments/{shipment_id}",
+            "submit_label": "Обновить статус",
+        },
+    )
 
 
 @router.post("/shipments/{shipment_id}/status")
@@ -389,12 +537,43 @@ def shipment_status_update(request: Request, shipment_id: int, status_code: str 
     shipment = fetch_shipment_for_user(shipment_id, user)
     if not shipment:
         return render_template(request, "error.html", {"title": "Отгрузка не найдена", "message": "Карточка отгрузки не найдена."}, status_code=404)
-    statuses = fetch_all("SELECT status_code, name FROM shipment_statuses ORDER BY name")
+    statuses = fetch_shipment_status_options(shipment)
     try:
+        new_status = clean_text(status_code)
+        if not new_status:
+            raise ValueError("Не выбран новый статус отгрузки.")
+        validate_shipment_status_change(shipment, new_status)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE shipments SET status_code = %s WHERE shipment_id = %s", (clean_text(status_code), shipment_id))
+                if new_status == "shipped":
+                    cur.execute(
+                        """
+                        UPDATE shipments
+                        SET status_code = %s,
+                            shipped_at = COALESCE(shipped_at, CURRENT_TIMESTAMP)
+                        WHERE shipment_id = %s
+                        """,
+                        (new_status, shipment_id),
+                    )
+                else:
+                    cur.execute("UPDATE shipments SET status_code = %s WHERE shipment_id = %s", (new_status, shipment_id))
         set_flash(request, "Статус отгрузки успешно обновлён.")
         return redirect_to(f"/shipments/{shipment_id}")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Изменить статус отгрузки #{shipment_id}", "action": f"/shipments/{shipment_id}/status", "fields": [{"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": status_code, "options": build_options(statuses, 'status_code', 'name')}], "back_url": f"/shipments/{shipment_id}", "submit_label": "Обновить статус", "error_message": str(exc)}, status_code=400)
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось изменить статус отгрузки."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Изменить статус отгрузки #{shipment_id}",
+            "action": f"/shipments/{shipment_id}/status",
+            "fields": shipment_status_fields(statuses, clean_text(status_code) or shipment["status_code"]),
+            "back_url": f"/shipments/{shipment_id}",
+            "submit_label": "Обновить статус",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )

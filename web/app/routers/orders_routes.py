@@ -61,7 +61,7 @@ def order_item_fields(products, data=None):
             "type": "select",
             "required": True,
             "value": data.get("product_id", ""),
-            "options": build_options(products, "product_id", "name"),
+            "options": build_options(products, "product_id", "display_name"),
         },
         {"name": "quantity", "label": "Количество", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
     ]
@@ -122,7 +122,7 @@ def fetch_order_status_options(order: dict, user: dict):
     next_statuses = get_next_statuses_for_user(order, user)
     if not next_statuses:
         return []
-    statuses = fetch_all(
+    return fetch_all(
         """
         SELECT status_code, name
         FROM order_statuses
@@ -131,11 +131,54 @@ def fetch_order_status_options(order: dict, user: dict):
         """,
         (next_statuses,),
     )
-    return statuses
 
 
 def fetch_products_for_order_items():
-    return fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
+    return fetch_all(
+        """
+        SELECT
+            p.product_id,
+            p.name,
+            p.name || ' / доступно ' || COALESCE(stock.quantity_available, 0)::TEXT AS display_name,
+            COALESCE(stock.quantity_available, 0) AS quantity_available
+        FROM products AS p
+        LEFT JOIN (
+            SELECT product_id, SUM(quantity_current) AS quantity_available
+            FROM finished_goods_stock
+            WHERE quantity_current > 0
+              AND expiry_date >= CURRENT_DATE
+            GROUP BY product_id
+        ) AS stock ON stock.product_id = p.product_id
+        WHERE p.is_active = TRUE
+          AND COALESCE(stock.quantity_available, 0) > 0
+        ORDER BY p.name
+        """
+    )
+
+
+def get_product_for_order(conn, product_id: int):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                p.product_id,
+                p.name,
+                p.price,
+                COALESCE(stock.quantity_available, 0) AS quantity_available
+            FROM products AS p
+            LEFT JOIN (
+                SELECT product_id, SUM(quantity_current) AS quantity_available
+                FROM finished_goods_stock
+                WHERE quantity_current > 0
+                  AND expiry_date >= CURRENT_DATE
+                GROUP BY product_id
+            ) AS stock ON stock.product_id = p.product_id
+            WHERE p.product_id = %s
+              AND p.is_active = TRUE
+            """,
+            (product_id,),
+        )
+        return cur.fetchone()
 
 
 @router.get("/orders")
@@ -304,20 +347,24 @@ def order_new(
                 )
         set_flash(request, "Заказ создан со статусом «Черновик». Теперь можно добавить его позиции.")
         return redirect_to(f"/orders/{order_id}")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(
-            request,
-            "form.html",
-            {
-                "title": "Создать заказ",
-                "action": "/orders/new",
-                "fields": order_fields(customers, form_data, is_client_user=is_client_user, customer_id_value=user.get("customer_id")),
-                "back_url": "/orders",
-                "submit_label": "Создать заказ",
-                "error_message": str(exc),
-            },
-            status_code=400,
-        )
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось создать заказ. Проверьте корректность данных и попробуйте снова."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": "Создать заказ",
+            "action": "/orders/new",
+            "fields": order_fields(customers, form_data, is_client_user=is_client_user, customer_id_value=user.get("customer_id")),
+            "back_url": "/orders",
+            "submit_label": "Создать заказ",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
 
 
 @router.get("/orders/{order_id}")
@@ -429,52 +476,86 @@ def order_item_new(
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             order_item_id = next_id(conn, "order_items", "order_item_id")
             with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT product_id, name, price
-                    FROM products
-                    WHERE product_id = %s AND is_active = TRUE
-                    """,
-                    (product_id_value,),
-                )
-                product = cur.fetchone()
+                product = get_product_for_order(conn, product_id_value)
                 if not product:
                     raise ValueError("Выбранная продукция не существует или недоступна.")
 
+                available_qty = Decimal(product["quantity_available"])
+                if available_qty <= 0:
+                    raise ValueError("Этой продукции сейчас нет в наличии.")
+                if quantity_value > available_qty:
+                    raise ValueError(f"Недостаточно готовой продукции на складе. Доступно: {product['quantity_available']}.")
+
                 unit_price_value = Decimal(product["price"])
-                line_amount = quantity_value * unit_price_value
+
                 cur.execute(
                     """
-                    INSERT INTO order_items (
-                        order_item_id, order_id, product_id, quantity, unit_price, line_amount
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    SELECT order_item_id, quantity
+                    FROM order_items
+                    WHERE order_id = %s AND product_id = %s
                     """,
-                    (
-                        order_item_id,
-                        order_id,
-                        product_id_value,
-                        quantity_value,
-                        unit_price_value,
-                        line_amount,
-                    ),
+                    (order_id, product_id_value),
                 )
-        set_flash(request, "Позиция заказа успешно добавлена. Цена и сумма рассчитаны на сервере.")
+                existing_item = cur.fetchone()
+
+                if existing_item:
+                    new_quantity = Decimal(existing_item["quantity"]) + quantity_value
+                    if new_quantity > available_qty:
+                        raise ValueError(f"Недостаточно готовой продукции на складе. Доступно: {product['quantity_available']}.")
+                    cur.execute(
+                        """
+                        UPDATE order_items
+                        SET quantity = %s,
+                            unit_price = %s,
+                            line_amount = %s
+                        WHERE order_item_id = %s
+                        """,
+                        (
+                            new_quantity,
+                            unit_price_value,
+                            new_quantity * unit_price_value,
+                            existing_item["order_item_id"],
+                        ),
+                    )
+                    flash_message = "Позиция уже была в заказе, количество обновлено."
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO order_items (
+                            order_item_id, order_id, product_id, quantity, unit_price, line_amount
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            order_item_id,
+                            order_id,
+                            product_id_value,
+                            quantity_value,
+                            unit_price_value,
+                            quantity_value * unit_price_value,
+                        ),
+                    )
+                    flash_message = "Позиция заказа успешно добавлена. Цена и сумма рассчитаны на сервере."
+        set_flash(request, flash_message)
         return redirect_to(f"/orders/{order_id}")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(
-            request,
-            "form.html",
-            {
-                "title": f"Добавить позицию в заказ #{order_id}",
-                "action": f"/orders/{order_id}/items/new",
-                "fields": order_item_fields(products, form_data),
-                "back_url": f"/orders/{order_id}",
-                "submit_label": "Добавить позицию",
-                "error_message": str(exc),
-            },
-            status_code=400,
-        )
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось сохранить позицию заказа. Проверьте данные и попробуйте снова."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Добавить позицию в заказ #{order_id}",
+            "action": f"/orders/{order_id}/items/new",
+            "fields": order_item_fields(products, form_data),
+            "back_url": f"/orders/{order_id}",
+            "submit_label": "Добавить позицию",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
 
 
 @router.get("/orders/{order_id}/status")
@@ -525,18 +606,22 @@ def order_status_update(request: Request, order_id: int, status_code: str = Form
                 cur.execute("UPDATE customer_orders SET status_code = %s WHERE order_id = %s", (new_status, order_id))
         set_flash(request, "Статус заказа успешно обновлён.")
         return redirect_to(f"/orders/{order_id}")
-    except (PsycopgError, ValueError) as exc:
-        fallback_status = clean_text(status_code) or order["status_code"]
-        return render_template(
-            request,
-            "form.html",
-            {
-                "title": f"Изменить статус заказа #{order_id}",
-                "action": f"/orders/{order_id}/status",
-                "fields": status_fields(statuses, fallback_status),
-                "back_url": f"/orders/{order_id}",
-                "submit_label": "Обновить статус",
-                "error_message": str(exc),
-            },
-            status_code=400,
-        )
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось изменить статус заказа."
+
+    fallback_status = clean_text(status_code) or order["status_code"]
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Изменить статус заказа #{order_id}",
+            "action": f"/orders/{order_id}/status",
+            "fields": status_fields(statuses, fallback_status),
+            "back_url": f"/orders/{order_id}",
+            "submit_label": "Обновить статус",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )

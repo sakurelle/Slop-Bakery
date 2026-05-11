@@ -46,6 +46,7 @@ ACTION_RULES = {
     "shipments.change_status": {"admin", "warehouse_worker"},
     "production.view": {"admin", "technologist"},
     "production.create": {"admin", "technologist"},
+    "production.change_status": {"admin", "technologist"},
     "quality.view": {"admin", "quality_control"},
     "quality.create": {"admin", "quality_control"},
     "audit.view": {"admin"},
@@ -57,6 +58,12 @@ ACTION_RULES = {
     "materials.manage": {"admin", "warehouse_worker"},
     "products.manage": {"admin"},
     "tech_cards.manage": {"admin", "technologist"},
+    "tech_cards.view": {"admin", "technologist"},
+    "tech_cards.change_status": {"admin", "technologist"},
+    "reports.view_full": {"admin"},
+    "reports.view_production": {"technologist"},
+    "reports.view_warehouse": {"warehouse_worker"},
+    "reports.view_quality": {"quality_control"},
 }
 
 NAV_ITEMS = [

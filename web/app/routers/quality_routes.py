@@ -79,9 +79,39 @@ def get_quality_form_sources():
         ORDER BY pb.production_batch_id DESC
         """
     )
-    inspectors = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
+    inspectors = fetch_all(
+        """
+        SELECT DISTINCT u.user_id, u.full_name
+        FROM users AS u
+        JOIN user_roles AS ur ON ur.user_id = u.user_id
+        JOIN roles AS r ON r.role_id = ur.role_id
+        WHERE u.status_code = 'active'
+          AND r.role_code = 'quality_control'
+        ORDER BY u.full_name
+        """
+    )
     results = fetch_all("SELECT status_code, name FROM quality_statuses ORDER BY name")
     return delivery_items, production_batches, inspectors, results
+
+
+def validate_inspector(conn, inspector_user_id: int | None):
+    if inspector_user_id is None:
+        raise ValueError("Не выбран инспектор качества.")
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM users AS u
+            JOIN user_roles AS ur ON ur.user_id = u.user_id
+            JOIN roles AS r ON r.role_id = ur.role_id
+            WHERE u.user_id = %s
+              AND u.status_code = 'active'
+              AND r.role_code = 'quality_control'
+            """,
+            (inspector_user_id,),
+        )
+        if not cur.fetchone():
+            raise ValueError("Инспектором качества может быть только активный сотрудник ОТК.")
 
 
 @router.get("/quality")
@@ -200,6 +230,7 @@ def quality_new(
         check_type_value = clean_text(check_type)
         delivery_item_id_value = parse_int(delivery_item_id, "Позиция поставки", allow_none=True)
         production_batch_id_value = parse_int(production_batch_id, "Производственная партия", allow_none=True)
+        inspector_user_id_value = parse_int(inspector_user_id, "Инспектор", allow_none=True)
         if check_type_value == "raw_material":
             if delivery_item_id_value is None or production_batch_id_value is not None:
                 raise ValueError("Для проверки сырья нужно указать позицию поставки и не указывать производственную партию.")
@@ -210,6 +241,7 @@ def quality_new(
             raise ValueError("Недопустимый тип проверки качества.")
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            validate_inspector(conn, inspector_user_id_value)
             quality_check_id = next_id(conn, "quality_checks", "quality_check_id")
             with conn.cursor() as cur:
                 if delivery_item_id_value is not None:
@@ -236,7 +268,7 @@ def quality_new(
                         delivery_item_id_value,
                         production_batch_id_value,
                         parse_datetime_local(checked_at, "Дата проверки"),
-                        parse_int(inspector_user_id, "Инспектор", allow_none=True),
+                        inspector_user_id_value,
                         clean_text(result_code),
                         clean_text(parameter_name),
                         clean_text(measured_value),
@@ -247,5 +279,8 @@ def quality_new(
                 )
         set_flash(request, "Проверка качества успешно добавлена.")
         return redirect_to("/quality")
-    except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Добавить проверку качества", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results, form_data), "back_url": "/quality", "submit_label": "Создать запись", "error_message": str(exc)}, status_code=400)
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось сохранить проверку качества."
+    return render_template(request, "form.html", {"title": "Добавить проверку качества", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results, form_data), "back_url": "/quality", "submit_label": "Создать запись", "error_message": error_message}, status_code=400)
