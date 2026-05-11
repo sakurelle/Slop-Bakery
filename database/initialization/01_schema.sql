@@ -268,6 +268,20 @@ CREATE TABLE invoices (
     note TEXT
 );
 
+CREATE TABLE supplier_invoices (
+    supplier_invoice_id BIGINT PRIMARY KEY,
+    supplier_invoice_number VARCHAR(50),
+    delivery_id BIGINT,
+    supplier_id BIGINT,
+    issue_date DATE,
+    due_date DATE,
+    paid_at TIMESTAMP WITH TIME ZONE,
+    amount NUMERIC(12,2),
+    status_code VARCHAR(32),
+    document_ref VARCHAR(100),
+    note TEXT
+);
+
 CREATE TABLE shipments (
     shipment_id BIGINT PRIMARY KEY,
     shipment_number VARCHAR(50),

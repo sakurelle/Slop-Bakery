@@ -68,10 +68,16 @@ def fetch_invoice_for_user(invoice_id: int, user: dict):
 def get_invoice_orders():
     return fetch_all(
         """
-        SELECT order_id, order_number || ' / ' || status_code AS display_name
-        FROM customer_orders
-        WHERE status_code IN ('confirmed', 'in_production', 'ready', 'shipped', 'completed')
-        ORDER BY order_id DESC
+        SELECT o.order_id, o.order_number || ' / ' || o.status_code AS display_name
+        FROM customer_orders AS o
+        WHERE o.status_code IN ('confirmed', 'in_production', 'ready', 'shipped', 'completed')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM invoices AS i
+              WHERE i.order_id = o.order_id
+                AND i.status_code IN ('issued', 'overdue', 'paid')
+          )
+        ORDER BY o.order_id DESC
         """
     )
 
@@ -256,13 +262,13 @@ def invoice_new(
                     SELECT 1
                     FROM invoices
                     WHERE order_id = %s
-                      AND status_code IN ('issued', 'overdue')
+                      AND status_code IN ('issued', 'overdue', 'paid')
                     LIMIT 1
                     """,
                     (order_id_value,),
                 )
                 if cur.fetchone():
-                    raise ValueError("Для этого заказа уже существует активный счёт.")
+                    raise ValueError("По этому заказу уже существует счёт.")
 
                 cur.execute(
                     """

@@ -21,6 +21,7 @@ from .routers import (
     quality_routes,
     reports_routes,
     shipments_routes,
+    supplier_invoices_routes,
     suppliers_routes,
     tech_cards_routes,
 )
@@ -85,6 +86,7 @@ app.include_router(orders_routes.router)
 app.include_router(production_routes.router)
 app.include_router(quality_routes.router)
 app.include_router(invoices_routes.router)
+app.include_router(supplier_invoices_routes.router)
 app.include_router(shipments_routes.router)
 app.include_router(reports_routes.router)
 app.include_router(audit_routes.router)

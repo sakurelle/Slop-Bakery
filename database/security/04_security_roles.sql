@@ -67,6 +67,7 @@ GRANT SELECT ON
     customers,
     users,
     suppliers,
+    supplier_invoices,
     raw_materials,
     products,
     customer_orders,

@@ -297,6 +297,23 @@ ALTER TABLE invoices
         OR (status_code <> 'paid' AND paid_at IS NULL)
     );
 
+ALTER TABLE supplier_invoices
+    ALTER COLUMN supplier_invoice_number SET NOT NULL,
+    ALTER COLUMN delivery_id SET NOT NULL,
+    ALTER COLUMN supplier_id SET NOT NULL,
+    ALTER COLUMN issue_date SET NOT NULL,
+    ALTER COLUMN amount SET NOT NULL,
+    ALTER COLUMN status_code SET NOT NULL,
+    ADD CONSTRAINT uq_supplier_invoices_number UNIQUE (supplier_invoice_number),
+    ADD CONSTRAINT uq_supplier_invoices_delivery_id UNIQUE (delivery_id),
+    ADD CONSTRAINT chk_supplier_invoices_number_not_blank CHECK (BTRIM(supplier_invoice_number) <> ''),
+    ADD CONSTRAINT chk_supplier_invoices_amount CHECK (amount >= 0),
+    ADD CONSTRAINT chk_supplier_invoices_due_date CHECK (due_date IS NULL OR due_date >= issue_date),
+    ADD CONSTRAINT chk_supplier_invoices_paid_at CHECK (
+        (status_code = 'paid' AND paid_at IS NOT NULL AND paid_at::DATE >= issue_date)
+        OR (status_code <> 'paid' AND paid_at IS NULL)
+    );
+
 ALTER TABLE shipments
     ALTER COLUMN shipment_number SET NOT NULL,
     ALTER COLUMN order_id SET NOT NULL,
@@ -423,6 +440,14 @@ ALTER TABLE invoices
     ADD CONSTRAINT fk_invoices_order_id
         FOREIGN KEY (order_id) REFERENCES customer_orders (order_id) ON DELETE RESTRICT,
     ADD CONSTRAINT fk_invoices_status_code
+        FOREIGN KEY (status_code) REFERENCES invoice_statuses (status_code) ON DELETE RESTRICT;
+
+ALTER TABLE supplier_invoices
+    ADD CONSTRAINT fk_supplier_invoices_delivery_id
+        FOREIGN KEY (delivery_id) REFERENCES raw_material_deliveries (delivery_id) ON DELETE RESTRICT,
+    ADD CONSTRAINT fk_supplier_invoices_supplier_id
+        FOREIGN KEY (supplier_id) REFERENCES suppliers (supplier_id) ON DELETE RESTRICT,
+    ADD CONSTRAINT fk_supplier_invoices_status_code
         FOREIGN KEY (status_code) REFERENCES invoice_statuses (status_code) ON DELETE RESTRICT;
 
 ALTER TABLE shipments

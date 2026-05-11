@@ -128,6 +128,22 @@ CREATE INDEX IF NOT EXISTS idx_invoices_order_id
 CREATE INDEX IF NOT EXISTS idx_invoices_status_code
     ON invoices (status_code);
 
+CREATE UNIQUE INDEX IF NOT EXISTS ux_invoices_one_active_per_order
+    ON invoices (order_id)
+    WHERE status_code IN ('issued', 'overdue', 'paid');
+
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_delivery_id
+    ON supplier_invoices (delivery_id);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_supplier_id
+    ON supplier_invoices (supplier_id);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_status_code
+    ON supplier_invoices (status_code);
+
+CREATE INDEX IF NOT EXISTS idx_supplier_invoices_issue_date
+    ON supplier_invoices (issue_date);
+
 CREATE INDEX IF NOT EXISTS idx_shipments_order_id
     ON shipments (order_id);
 

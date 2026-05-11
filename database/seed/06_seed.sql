@@ -237,6 +237,14 @@ INSERT INTO invoices (
     (2, 'INV-2026-002', 2, CURRENT_DATE - 4, CURRENT_DATE + 2, NULL, 10490.00, 'issued', 'Wholesale invoice awaiting payment.'),
     (3, 'INV-2026-003', 3, CURRENT_DATE - 3, CURRENT_DATE - 1, NULL, 1680.00, 'overdue', 'Retail invoice overdue.');
 
+INSERT INTO supplier_invoices (
+    supplier_invoice_id, supplier_invoice_number, delivery_id, supplier_id, issue_date,
+    due_date, paid_at, amount, status_code, document_ref, note
+) VALUES
+    (1, 'SINV-2026-001', 1, 1, CURRENT_DATE - 18, CURRENT_DATE - 11, CURRENT_TIMESTAMP - INTERVAL '17 days', 22950.00, 'paid', 'SUP-INV-001', 'Invoice for flour and salt delivery.'),
+    (2, 'SINV-2026-002', 2, 2, CURRENT_DATE - 16, CURRENT_DATE - 9, NULL, 49600.00, 'overdue', 'SUP-INV-002', 'Invoice for sugar and poppy seeds delivery.'),
+    (3, 'SINV-2026-003', 3, 3, CURRENT_DATE - 12, CURRENT_DATE - 5, NULL, 72450.00, 'issued', 'SUP-INV-003', 'Invoice for yeast and butter delivery.');
+
 INSERT INTO shipments (
     shipment_id, shipment_number, order_id, shipped_at, status_code, delivery_address, waybill_number, created_by_user_id, note
 ) VALUES

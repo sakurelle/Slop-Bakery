@@ -107,7 +107,61 @@ def reports_page(
             """,
             (start_value, end_value),
         )
-        report_sections.append({"title": "Продажи за период", "headers": [("product_name", "Продукция"), ("total_quantity", "Количество"), ("total_amount", "Сумма")], "rows": sales})
+        unpaid_supplier_invoices = fetch_all(
+            """
+            SELECT
+                si.supplier_invoice_number,
+                s.company_name,
+                d.delivery_number,
+                si.issue_date,
+                si.due_date,
+                si.amount,
+                si.status_code
+            FROM supplier_invoices AS si
+            JOIN suppliers AS s ON s.supplier_id = si.supplier_id
+            JOIN raw_material_deliveries AS d ON d.delivery_id = si.delivery_id
+            WHERE si.status_code IN ('issued', 'overdue')
+              AND si.issue_date BETWEEN %s AND %s
+            ORDER BY si.due_date NULLS LAST, si.issue_date DESC
+            """,
+            (start_value, end_value),
+        )
+        paid_supplier_invoices = fetch_all(
+            """
+            SELECT
+                si.supplier_invoice_number,
+                s.company_name,
+                d.delivery_number,
+                si.issue_date,
+                si.paid_at,
+                si.amount,
+                si.status_code
+            FROM supplier_invoices AS si
+            JOIN suppliers AS s ON s.supplier_id = si.supplier_id
+            JOIN raw_material_deliveries AS d ON d.delivery_id = si.delivery_id
+            WHERE si.status_code = 'paid'
+              AND si.paid_at::DATE BETWEEN %s AND %s
+            ORDER BY si.paid_at DESC
+            """,
+            (start_value, end_value),
+        )
+        supplier_invoice_summary = fetch_all(
+            """
+            SELECT
+                COALESCE(SUM(CASE WHEN status_code IN ('issued', 'overdue') THEN amount ELSE 0 END), 0) AS outstanding_amount,
+                COALESCE(SUM(CASE WHEN status_code = 'paid' AND paid_at::DATE BETWEEN %s AND %s THEN amount ELSE 0 END), 0) AS paid_amount
+            FROM supplier_invoices
+            """,
+            (start_value, end_value),
+        )
+        report_sections.extend(
+            [
+                {"title": "Продажи за период", "headers": [("product_name", "Продукция"), ("total_quantity", "Количество"), ("total_amount", "Сумма")], "rows": sales},
+                {"title": "Неоплаченные счета поставщиков", "headers": [("supplier_invoice_number", "Номер счёта"), ("company_name", "Поставщик"), ("delivery_number", "Поставка"), ("issue_date", "Дата"), ("due_date", "Срок оплаты"), ("amount", "Сумма"), ("status_code", "Статус")], "rows": unpaid_supplier_invoices},
+                {"title": "Оплаченные счета поставщиков", "headers": [("supplier_invoice_number", "Номер счёта"), ("company_name", "Поставщик"), ("delivery_number", "Поставка"), ("issue_date", "Дата выставления"), ("paid_at", "Дата оплаты"), ("amount", "Сумма"), ("status_code", "Статус")], "rows": paid_supplier_invoices},
+                {"title": "Сводка по счетам поставщиков", "headers": [("outstanding_amount", "Текущая задолженность"), ("paid_amount", "Оплачено за период")], "rows": supplier_invoice_summary},
+            ]
+        )
 
     if has_action(user, "reports.view_full") or has_action(user, "reports.view_quality"):
         quality = fetch_all(

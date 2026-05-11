@@ -183,6 +183,12 @@ AFTER INSERT OR UPDATE OR DELETE ON invoices
 FOR EACH ROW
 EXECUTE FUNCTION audit_row_change('invoice_id');
 
+DROP TRIGGER IF EXISTS trg_audit_supplier_invoices ON supplier_invoices;
+CREATE TRIGGER trg_audit_supplier_invoices
+AFTER INSERT OR UPDATE OR DELETE ON supplier_invoices
+FOR EACH ROW
+EXECUTE FUNCTION audit_row_change('supplier_invoice_id');
+
 DROP TRIGGER IF EXISTS trg_audit_shipments ON shipments;
 CREATE TRIGGER trg_audit_shipments
 AFTER INSERT OR UPDATE OR DELETE ON shipments
