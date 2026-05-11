@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_section, redirect_to, render_template, set_flash
+from ..auth import authorize_action, authorize_section, render_template, redirect_to, set_flash
 from ..database import fetch_all, fetch_one, get_db, next_id
-from ..utils import clean_text, parse_bool
+from ..permissions import has_action
+from ..utils import build_options, clean_text, parse_bool, parse_decimal, parse_int
 
 
 router = APIRouter()
@@ -19,6 +20,43 @@ def supplier_fields(data=None):
         {"name": "address", "label": "Адрес", "type": "textarea", "value": data.get("address", "")},
         {"name": "is_active", "label": "Активен", "type": "checkbox", "value": bool(data.get("is_active", True))},
     ]
+
+
+def supplier_material_fields(materials, data=None):
+    data = data or {}
+    return [
+        {
+            "name": "material_id",
+            "label": "Сырьё",
+            "type": "select",
+            "required": True,
+            "value": data.get("material_id", ""),
+            "options": build_options(materials, "material_id", "name"),
+        },
+        {"name": "purchase_price", "label": "Закупочная цена", "type": "number", "step": "0.01", "min": "0", "value": data.get("purchase_price", "")},
+        {"name": "lead_time_days", "label": "Срок поставки, дней", "type": "number", "min": "0", "value": data.get("lead_time_days", "")},
+        {"name": "is_active", "label": "Активно", "type": "checkbox", "value": bool(data.get("is_active", True))},
+    ]
+
+
+def get_material_options():
+    return fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
+
+
+def fetch_supplier(supplier_id: int):
+    return fetch_one("SELECT * FROM suppliers WHERE supplier_id = %s", (supplier_id,))
+
+
+def fetch_supplier_material(supplier_material_id: int):
+    return fetch_one(
+        """
+        SELECT sm.*, rm.name AS material_name
+        FROM supplier_materials AS sm
+        JOIN raw_materials AS rm ON rm.material_id = sm.material_id
+        WHERE sm.supplier_material_id = %s
+        """,
+        (supplier_material_id,),
+    )
 
 
 @router.get("/suppliers")
@@ -133,12 +171,18 @@ def supplier_detail(request: Request, supplier_id: int):
     user = authorize_section(request, "suppliers")
     if not isinstance(user, dict):
         return user
-    supplier = fetch_one("SELECT * FROM suppliers WHERE supplier_id = %s", (supplier_id,))
+    supplier = fetch_supplier(supplier_id)
     if not supplier:
         return render_template(request, "error.html", {"title": "Поставщик не найден", "message": "Карточка поставщика не найдена."}, status_code=404)
+
     materials = fetch_all(
         """
-        SELECT rm.name, sm.purchase_price, sm.lead_time_days, sm.is_active
+        SELECT
+            sm.supplier_material_id,
+            rm.name,
+            sm.purchase_price,
+            sm.lead_time_days,
+            sm.is_active
         FROM supplier_materials AS sm
         JOIN raw_materials AS rm ON rm.material_id = sm.material_id
         WHERE sm.supplier_id = %s
@@ -146,6 +190,21 @@ def supplier_detail(request: Request, supplier_id: int):
         """,
         (supplier_id,),
     )
+    if has_action(user, "suppliers.manage_materials"):
+        for row in materials:
+            row["_detail_url"] = f"/suppliers/{supplier_id}/materials/{row['supplier_material_id']}/edit"
+            row["_row_forms"] = [
+                {
+                    "action": f"/suppliers/{supplier_id}/materials/{row['supplier_material_id']}/deactivate",
+                    "label": "Отключить",
+                    "class": "btn-outline-warning",
+                }
+            ] if row["is_active"] else []
+
+    extra_actions = []
+    if has_action(user, "suppliers.manage_materials"):
+        extra_actions.append({"label": "Добавить поставляемое сырьё", "url": f"/suppliers/{supplier_id}/materials/new"})
+
     return render_template(
         request,
         "detail.html",
@@ -153,6 +212,7 @@ def supplier_detail(request: Request, supplier_id: int):
             "title": supplier["company_name"],
             "back_url": "/suppliers",
             "edit_url": f"/suppliers/{supplier_id}/edit",
+            "extra_actions": extra_actions,
             "details": [
                 ("ID", supplier["supplier_id"]),
                 ("Компания", supplier["company_name"]),
@@ -168,7 +228,7 @@ def supplier_detail(request: Request, supplier_id: int):
                     "title": "Поставляемое сырьё",
                     "headers": [("name", "Сырьё"), ("purchase_price", "Цена"), ("lead_time_days", "Срок поставки"), ("is_active", "Активно")],
                     "rows": materials,
-                    "empty_message": "Для этого поставщика сырьё не задано.",
+                    "empty_message": "Для этого поставщика ещё не задано поставляемое сырьё.",
                 }
             ],
         },
@@ -180,7 +240,7 @@ def supplier_edit_page(request: Request, supplier_id: int):
     user = authorize_section(request, "suppliers")
     if not isinstance(user, dict):
         return user
-    supplier = fetch_one("SELECT * FROM suppliers WHERE supplier_id = %s", (supplier_id,))
+    supplier = fetch_supplier(supplier_id)
     if not supplier:
         return render_template(request, "error.html", {"title": "Поставщик не найден", "message": "Карточка поставщика не найдена."}, status_code=404)
     return render_template(
@@ -258,3 +318,261 @@ def supplier_edit(
             },
             status_code=400,
         )
+
+
+@router.get("/suppliers/{supplier_id}/materials/new")
+def supplier_material_new_page(request: Request, supplier_id: int):
+    user = authorize_action(request, "suppliers.manage_materials", "У вас нет прав на управление поставляемым сырьём.")
+    if not isinstance(user, dict):
+        return user
+    supplier = fetch_supplier(supplier_id)
+    if not supplier:
+        return render_template(request, "error.html", {"title": "Поставщик не найден", "message": "Карточка поставщика не найдена."}, status_code=404)
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Добавить поставляемое сырьё для {supplier['company_name']}",
+            "action": f"/suppliers/{supplier_id}/materials/new",
+            "fields": supplier_material_fields(get_material_options()),
+            "back_url": f"/suppliers/{supplier_id}",
+            "submit_label": "Сохранить связь",
+        },
+    )
+
+
+@router.post("/suppliers/{supplier_id}/materials/new")
+def supplier_material_new(
+    request: Request,
+    supplier_id: int,
+    material_id: str = Form(...),
+    purchase_price: str = Form(""),
+    lead_time_days: str = Form(""),
+    is_active: str | None = Form(None),
+):
+    user = authorize_action(request, "suppliers.manage_materials", "У вас нет прав на управление поставляемым сырьём.")
+    if not isinstance(user, dict):
+        return user
+    supplier = fetch_supplier(supplier_id)
+    if not supplier:
+        return render_template(request, "error.html", {"title": "Поставщик не найден", "message": "Карточка поставщика не найдена."}, status_code=404)
+    materials = get_material_options()
+    form_data = {
+        "material_id": material_id,
+        "purchase_price": purchase_price,
+        "lead_time_days": lead_time_days,
+        "is_active": parse_bool(is_active),
+    }
+    try:
+        material_id_value = parse_int(material_id, "Сырьё")
+        purchase_price_value = parse_decimal(purchase_price, "Закупочная цена", allow_none=True)
+        lead_time_value = parse_int(lead_time_days, "Срок поставки", allow_none=True)
+        if purchase_price_value is not None and purchase_price_value < 0:
+            raise ValueError("Закупочная цена не может быть отрицательной.")
+        if lead_time_value is not None and lead_time_value < 0:
+            raise ValueError("Срок поставки не может быть отрицательным.")
+
+        with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM raw_materials WHERE material_id = %s", (material_id_value,))
+                if not cur.fetchone():
+                    raise ValueError("Выбранное сырьё не существует.")
+
+                cur.execute(
+                    """
+                    SELECT supplier_material_id
+                    FROM supplier_materials
+                    WHERE supplier_id = %s
+                      AND material_id = %s
+                    """,
+                    (supplier_id, material_id_value),
+                )
+                existing = cur.fetchone()
+
+                if existing:
+                    cur.execute(
+                        """
+                        UPDATE supplier_materials
+                        SET purchase_price = %s,
+                            lead_time_days = %s,
+                            is_active = %s
+                        WHERE supplier_material_id = %s
+                        """,
+                        (
+                            purchase_price_value,
+                            lead_time_value,
+                            parse_bool(is_active),
+                            existing["supplier_material_id"],
+                        ),
+                    )
+                    set_flash(request, "Поставляемое сырьё уже закреплено, данные обновлены.")
+                else:
+                    supplier_material_id = next_id(conn, "supplier_materials", "supplier_material_id")
+                    cur.execute(
+                        """
+                        INSERT INTO supplier_materials (
+                            supplier_material_id, supplier_id, material_id, purchase_price, lead_time_days, is_active
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        """,
+                        (
+                            supplier_material_id,
+                            supplier_id,
+                            material_id_value,
+                            purchase_price_value,
+                            lead_time_value,
+                            parse_bool(is_active),
+                        ),
+                    )
+                    set_flash(request, "Поставляемое сырьё успешно добавлено.")
+        return redirect_to(f"/suppliers/{supplier_id}")
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось сохранить поставляемое сырьё."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Добавить поставляемое сырьё для {supplier['company_name']}",
+            "action": f"/suppliers/{supplier_id}/materials/new",
+            "fields": supplier_material_fields(materials, form_data),
+            "back_url": f"/suppliers/{supplier_id}",
+            "submit_label": "Сохранить связь",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
+
+
+@router.get("/suppliers/{supplier_id}/materials/{supplier_material_id}/edit")
+def supplier_material_edit_page(request: Request, supplier_id: int, supplier_material_id: int):
+    user = authorize_action(request, "suppliers.manage_materials", "У вас нет прав на управление поставляемым сырьём.")
+    if not isinstance(user, dict):
+        return user
+    supplier = fetch_supplier(supplier_id)
+    supplier_material = fetch_supplier_material(supplier_material_id)
+    if not supplier or not supplier_material or supplier_material["supplier_id"] != supplier_id:
+        return render_template(request, "error.html", {"title": "Связь не найдена", "message": "Запись поставляемого сырья не найдена."}, status_code=404)
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Редактировать поставляемое сырьё для {supplier['company_name']}",
+            "action": f"/suppliers/{supplier_id}/materials/{supplier_material_id}/edit",
+            "fields": supplier_material_fields(get_material_options(), supplier_material),
+            "back_url": f"/suppliers/{supplier_id}",
+            "submit_label": "Сохранить изменения",
+        },
+    )
+
+
+@router.post("/suppliers/{supplier_id}/materials/{supplier_material_id}/edit")
+def supplier_material_edit(
+    request: Request,
+    supplier_id: int,
+    supplier_material_id: int,
+    material_id: str = Form(...),
+    purchase_price: str = Form(""),
+    lead_time_days: str = Form(""),
+    is_active: str | None = Form(None),
+):
+    user = authorize_action(request, "suppliers.manage_materials", "У вас нет прав на управление поставляемым сырьём.")
+    if not isinstance(user, dict):
+        return user
+    supplier = fetch_supplier(supplier_id)
+    supplier_material = fetch_supplier_material(supplier_material_id)
+    if not supplier or not supplier_material or supplier_material["supplier_id"] != supplier_id:
+        return render_template(request, "error.html", {"title": "Связь не найдена", "message": "Запись поставляемого сырья не найдена."}, status_code=404)
+
+    materials = get_material_options()
+    form_data = {
+        "material_id": material_id,
+        "purchase_price": purchase_price,
+        "lead_time_days": lead_time_days,
+        "is_active": parse_bool(is_active),
+    }
+    try:
+        material_id_value = parse_int(material_id, "Сырьё")
+        purchase_price_value = parse_decimal(purchase_price, "Закупочная цена", allow_none=True)
+        lead_time_value = parse_int(lead_time_days, "Срок поставки", allow_none=True)
+        if purchase_price_value is not None and purchase_price_value < 0:
+            raise ValueError("Закупочная цена не может быть отрицательной.")
+        if lead_time_value is not None and lead_time_value < 0:
+            raise ValueError("Срок поставки не может быть отрицательным.")
+
+        with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT supplier_material_id
+                    FROM supplier_materials
+                    WHERE supplier_id = %s
+                      AND material_id = %s
+                      AND supplier_material_id <> %s
+                    """,
+                    (supplier_id, material_id_value, supplier_material_id),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    raise ValueError("Поставляемое сырьё уже закреплено за этим поставщиком.")
+
+                cur.execute(
+                    """
+                    UPDATE supplier_materials
+                    SET material_id = %s,
+                        purchase_price = %s,
+                        lead_time_days = %s,
+                        is_active = %s
+                    WHERE supplier_material_id = %s
+                    """,
+                    (
+                        material_id_value,
+                        purchase_price_value,
+                        lead_time_value,
+                        parse_bool(is_active),
+                        supplier_material_id,
+                    ),
+                )
+        set_flash(request, "Связь поставщик–сырьё успешно обновлена.")
+        return redirect_to(f"/suppliers/{supplier_id}")
+    except ValueError as exc:
+        error_message = str(exc)
+    except PsycopgError:
+        error_message = "Не удалось обновить поставляемое сырьё."
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Редактировать поставляемое сырьё для {supplier['company_name']}",
+            "action": f"/suppliers/{supplier_id}/materials/{supplier_material_id}/edit",
+            "fields": supplier_material_fields(materials, form_data),
+            "back_url": f"/suppliers/{supplier_id}",
+            "submit_label": "Сохранить изменения",
+            "error_message": error_message,
+        },
+        status_code=400,
+    )
+
+
+@router.post("/suppliers/{supplier_id}/materials/{supplier_material_id}/deactivate")
+def supplier_material_deactivate(request: Request, supplier_id: int, supplier_material_id: int):
+    user = authorize_action(request, "suppliers.manage_materials", "У вас нет прав на управление поставляемым сырьём.")
+    if not isinstance(user, dict):
+        return user
+    supplier_material = fetch_supplier_material(supplier_material_id)
+    if not supplier_material or supplier_material["supplier_id"] != supplier_id:
+        return render_template(request, "error.html", {"title": "Связь не найдена", "message": "Запись поставляемого сырья не найдена."}, status_code=404)
+    try:
+        with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE supplier_materials SET is_active = FALSE WHERE supplier_material_id = %s",
+                    (supplier_material_id,),
+                )
+        set_flash(request, "Поставляемое сырьё отключено.")
+    except PsycopgError:
+        set_flash(request, "Не удалось отключить поставляемое сырьё.", "danger")
+    return redirect_to(f"/suppliers/{supplier_id}")

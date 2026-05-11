@@ -490,7 +490,6 @@ def recipe_item_new(
                 )
                 existing = cur.fetchone()
                 if existing:
-                    new_quantity = existing["quantity"] + quantity_value
                     cur.execute(
                         """
                         UPDATE recipe_items
@@ -500,9 +499,9 @@ def recipe_item_new(
                             note = %s
                         WHERE recipe_item_id = %s
                         """,
-                        (new_quantity, unit_value, waste_value, note_value, existing["recipe_item_id"]),
+                        (quantity_value, unit_value, waste_value, note_value, existing["recipe_item_id"]),
                     )
-                    set_flash(request, "Ингредиент уже был в рецептуре, количество обновлено.")
+                    set_flash(request, "Сырьё уже было на этом этапе, значение обновлено.")
                 else:
                     recipe_item_id = next_id(conn, "recipe_items", "recipe_item_id")
                     cur.execute(

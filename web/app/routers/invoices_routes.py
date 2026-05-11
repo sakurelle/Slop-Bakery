@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
+from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
 from ..database import fetch_all, fetch_one, get_db, next_id
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_date
@@ -127,6 +127,14 @@ def invoices_list(request: Request):
     for row in rows:
         if has_action(user, "invoices.change_status"):
             row["_detail_url"] = f"/invoices/{row['invoice_id']}/status"
+        elif has_action(user, "invoices.pay_own") and row["status_code"] in {"issued", "overdue"}:
+            row["_row_forms"] = [
+                {
+                    "action": f"/invoices/{row['invoice_id']}/pay",
+                    "label": "Оплатить",
+                    "class": "btn-outline-success",
+                }
+            ]
     context = {
         "title": "Счета",
         "subtitle": "Счета, связанные с заказами клиентов.",
@@ -266,6 +274,37 @@ def invoice_new(
         },
         status_code=400,
     )
+
+
+@router.post("/invoices/{invoice_id}/pay")
+def invoice_pay(request: Request, invoice_id: int):
+    user = authorize_action(request, "invoices.pay_own", "У вас нет прав на оплату этого счёта.")
+    if not isinstance(user, dict):
+        return user
+    invoice = fetch_invoice_for_user(invoice_id, user)
+    if not invoice:
+        return forbidden_response(request, "Счёт не найден или недоступен.")
+    try:
+        if invoice["status_code"] == "paid":
+            raise ValueError("Счёт уже оплачен.")
+        if invoice["status_code"] not in {"issued", "overdue"}:
+            raise ValueError("Этот счёт нельзя оплатить в текущем статусе.")
+        with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE invoices
+                    SET status_code = 'paid',
+                        paid_at = CURRENT_TIMESTAMP
+                    WHERE invoice_id = %s
+                    """,
+                    (invoice_id,),
+                )
+        set_flash(request, "Счёт успешно оплачен.")
+        return redirect_to("/invoices")
+    except ValueError as exc:
+        set_flash(request, str(exc), "danger")
+        return redirect_to("/invoices")
 
 
 @router.get("/invoices/{invoice_id}/status")

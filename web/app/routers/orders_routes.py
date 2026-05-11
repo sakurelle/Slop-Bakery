@@ -143,11 +143,25 @@ def fetch_products_for_order_items():
             COALESCE(stock.quantity_available, 0) AS quantity_available
         FROM products AS p
         LEFT JOIN (
-            SELECT product_id, SUM(quantity_current) AS quantity_available
-            FROM finished_goods_stock
-            WHERE quantity_current > 0
-              AND expiry_date >= CURRENT_DATE
-            GROUP BY product_id
+            SELECT fgs.product_id, SUM(fgs.quantity_current) AS quantity_available
+            FROM finished_goods_stock AS fgs
+            WHERE fgs.quantity_current > 0
+              AND fgs.expiry_date >= CURRENT_DATE
+              AND EXISTS (
+                  SELECT 1
+                  FROM quality_checks AS qc_passed
+                  WHERE qc_passed.production_batch_id = fgs.production_batch_id
+                    AND qc_passed.check_type = 'finished_product'
+                    AND qc_passed.result_code = 'passed'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM quality_checks AS qc_failed
+                  WHERE qc_failed.production_batch_id = fgs.production_batch_id
+                    AND qc_failed.check_type = 'finished_product'
+                    AND qc_failed.result_code = 'failed'
+              )
+            GROUP BY fgs.product_id
         ) AS stock ON stock.product_id = p.product_id
         WHERE p.is_active = TRUE
           AND COALESCE(stock.quantity_available, 0) > 0
@@ -167,11 +181,25 @@ def get_product_for_order(conn, product_id: int):
                 COALESCE(stock.quantity_available, 0) AS quantity_available
             FROM products AS p
             LEFT JOIN (
-                SELECT product_id, SUM(quantity_current) AS quantity_available
-                FROM finished_goods_stock
-                WHERE quantity_current > 0
-                  AND expiry_date >= CURRENT_DATE
-                GROUP BY product_id
+                SELECT fgs.product_id, SUM(fgs.quantity_current) AS quantity_available
+                FROM finished_goods_stock AS fgs
+                WHERE fgs.quantity_current > 0
+                  AND fgs.expiry_date >= CURRENT_DATE
+                  AND EXISTS (
+                      SELECT 1
+                      FROM quality_checks AS qc_passed
+                      WHERE qc_passed.production_batch_id = fgs.production_batch_id
+                        AND qc_passed.check_type = 'finished_product'
+                        AND qc_passed.result_code = 'passed'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM quality_checks AS qc_failed
+                      WHERE qc_failed.production_batch_id = fgs.production_batch_id
+                        AND qc_failed.check_type = 'finished_product'
+                        AND qc_failed.result_code = 'failed'
+                  )
+                GROUP BY fgs.product_id
             ) AS stock ON stock.product_id = p.product_id
             WHERE p.product_id = %s
               AND p.is_active = TRUE
@@ -179,6 +207,54 @@ def get_product_for_order(conn, product_id: int):
             (product_id,),
         )
         return cur.fetchone()
+
+
+def ensure_paid_invoice_for_order(conn, order_id: int):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS invoice_count,
+                COUNT(*) FILTER (WHERE status_code = 'paid') AS paid_count
+            FROM invoices
+            WHERE order_id = %s
+            """,
+            (order_id,),
+        )
+        row = cur.fetchone()
+        if not row or row["invoice_count"] == 0:
+            raise ValueError("Заказ нельзя отгрузить: счёт ещё не создан.")
+        if row["paid_count"] == 0:
+            raise ValueError("Заказ нельзя отгрузить: счёт не оплачен.")
+
+
+def ensure_order_shipment_coverage(conn, order_id: int, shipment_statuses: tuple[str, ...], error_message: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                oi.order_item_id,
+                oi.quantity AS ordered_quantity,
+                COALESCE(SUM(CASE WHEN s.shipment_id IS NOT NULL THEN si.quantity ELSE 0 END), 0) AS shipped_quantity
+            FROM order_items AS oi
+            LEFT JOIN shipment_items AS si ON si.order_item_id = oi.order_item_id
+            LEFT JOIN shipments AS s
+                ON s.shipment_id = si.shipment_id
+               AND s.status_code = ANY(%s)
+            WHERE oi.order_id = %s
+            GROUP BY oi.order_item_id, oi.quantity
+            ORDER BY oi.order_item_id
+            """,
+            (list(shipment_statuses), order_id),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        raise ValueError(error_message)
+
+    for row in rows:
+        if Decimal(row["shipped_quantity"]) < Decimal(row["ordered_quantity"]):
+            raise ValueError(error_message)
 
 
 @router.get("/orders")
@@ -317,13 +393,14 @@ def order_new(
         """
     )
     is_client_user = is_client(user)
-    customer_value = user["customer_id"] if is_client_user else parse_int(customer_id, "Клиент")
+    customer_value = user["customer_id"] if is_client_user else customer_id
     form_data = {"customer_id": customer_value, "planned_shipment_date": planned_shipment_date, "comment": comment}
 
     if is_client_user and not user.get("customer_id"):
         return forbidden_response(request, "Для клиентского пользователя не привязан клиент. Обратитесь к администратору.")
 
     try:
+        customer_value = user["customer_id"] if is_client_user else parse_int(customer_id, "Клиент")
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             order_id = next_id(conn, "customer_orders", "order_id")
             order_number = f"ORD-WEB-{order_id:04d}"
@@ -602,6 +679,12 @@ def order_status_update(request: Request, order_id: int, status_code: str = Form
             raise ValueError("Не выбран новый статус заказа.")
         validate_order_status_change(order, new_status, user)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            if new_status == "shipped":
+                ensure_paid_invoice_for_order(conn, order_id)
+                ensure_order_shipment_coverage(conn, order_id, ("shipped", "delivered"), "Заказ нельзя отгрузить: отгрузка не покрывает все позиции заказа.")
+            elif new_status == "completed":
+                ensure_order_shipment_coverage(conn, order_id, ("delivered",), "Заказ нельзя завершить: отгрузка ещё не доставлена полностью.")
+
             with conn.cursor() as cur:
                 cur.execute("UPDATE customer_orders SET status_code = %s WHERE order_id = %s", (new_status, order_id))
         set_flash(request, "Статус заказа успешно обновлён.")

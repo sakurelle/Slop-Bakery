@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
@@ -57,7 +58,8 @@ def fetch_shipment_for_user(shipment_id: int, user: dict):
         SELECT
             s.*,
             o.order_number,
-            o.customer_id
+            o.customer_id,
+            o.status_code AS order_status_code
         FROM shipments AS s
         JOIN customer_orders AS o ON o.order_id = s.order_id
         WHERE s.shipment_id = %s
@@ -69,13 +71,45 @@ def fetch_shipment_for_user(shipment_id: int, user: dict):
     return fetch_one(query, tuple(params))
 
 
+def ensure_order_paid_for_shipping(conn, order_id: int):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                COUNT(*) AS invoice_count,
+                COUNT(*) FILTER (WHERE status_code = 'paid') AS paid_count
+            FROM invoices
+            WHERE order_id = %s
+            """,
+            (order_id,),
+        )
+        row = cur.fetchone()
+        if not row or row["invoice_count"] == 0:
+            raise ValueError("Заказ нельзя отгрузить: счёт ещё не создан.")
+        if row["paid_count"] == 0:
+            raise ValueError("Заказ нельзя отгрузить: счёт не оплачен.")
+
+
+def ensure_shipment_has_items(conn, shipment_id: int):
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM shipment_items WHERE shipment_id = %s LIMIT 1", (shipment_id,))
+        if not cur.fetchone():
+            raise ValueError("Нельзя отгрузить пустую отгрузку.")
+
+
 def get_shippable_orders():
     return fetch_all(
         """
-        SELECT order_id, order_number || ' / ' || status_code AS display_name
-        FROM customer_orders
-        WHERE status_code = 'ready'
-        ORDER BY order_id DESC
+        SELECT o.order_id, o.order_number || ' / ' || o.status_code AS display_name
+        FROM customer_orders AS o
+        WHERE o.status_code = 'ready'
+          AND EXISTS (
+              SELECT 1
+              FROM invoices AS i
+              WHERE i.order_id = o.order_id
+                AND i.status_code = 'paid'
+          )
+        ORDER BY o.order_id DESC
         """
     )
 
@@ -99,7 +133,7 @@ def fetch_shipment_item_form_data(order_id: int):
         SELECT
             fgs.finished_stock_id,
             fgs.product_id,
-            p.name || ' / ' || fgs.batch_number || ' / остаток ' || fgs.quantity_current::TEXT AS display_name
+            p.name || ' / ' || fgs.batch_number || ' / остаток ' || fgs.quantity_current::TEXT || ' / годен до ' || fgs.expiry_date::TEXT AS display_name
         FROM finished_goods_stock AS fgs
         JOIN products AS p ON p.product_id = fgs.product_id
         WHERE fgs.quantity_current > 0
@@ -109,12 +143,19 @@ def fetch_shipment_item_form_data(order_id: int):
               FROM order_items
               WHERE order_id = %s
           )
+          AND EXISTS (
+              SELECT 1
+              FROM quality_checks AS qc_passed
+              WHERE qc_passed.production_batch_id = fgs.production_batch_id
+                AND qc_passed.check_type = 'finished_product'
+                AND qc_passed.result_code = 'passed'
+          )
           AND NOT EXISTS (
               SELECT 1
-              FROM quality_checks AS qc
-              WHERE qc.production_batch_id = fgs.production_batch_id
-                AND qc.check_type = 'finished_product'
-                AND qc.result_code = 'failed'
+              FROM quality_checks AS qc_failed
+              WHERE qc_failed.production_batch_id = fgs.production_batch_id
+                AND qc_failed.check_type = 'finished_product'
+                AND qc_failed.result_code = 'failed'
           )
         ORDER BY fgs.expiry_date, fgs.finished_stock_id
         """,
@@ -145,6 +186,36 @@ def fetch_shipment_status_options(shipment: dict):
 def validate_shipment_status_change(shipment: dict, new_status: str):
     if new_status not in SHIPMENT_STATUS_TRANSITIONS.get(shipment["status_code"], set()):
         raise ValueError("Недопустимый переход статуса отгрузки.")
+
+
+def validate_finished_batch_quality(cur, production_batch_id: int):
+    cur.execute(
+        """
+        SELECT 1
+        FROM quality_checks
+        WHERE production_batch_id = %s
+          AND check_type = 'finished_product'
+          AND result_code = 'failed'
+        LIMIT 1
+        """,
+        (production_batch_id,),
+    )
+    if cur.fetchone():
+        raise ValueError("Партия не прошла проверку качества.")
+
+    cur.execute(
+        """
+        SELECT 1
+        FROM quality_checks
+        WHERE production_batch_id = %s
+          AND check_type = 'finished_product'
+          AND result_code = 'passed'
+        LIMIT 1
+        """,
+        (production_batch_id,),
+    )
+    if not cur.fetchone():
+        raise ValueError("Партия готовой продукции не может быть отгружена: нет успешной проверки качества.")
 
 
 @router.get("/shipments")
@@ -242,6 +313,7 @@ def shipment_new(
                     raise ValueError("Выбранный заказ не существует.")
                 if order["status_code"] != "ready":
                     raise ValueError("Создавать отгрузку можно только для заказа со статусом «Готов».")
+                ensure_order_paid_for_shipping(conn, order_id_value)
                 if shipped_at_value and shipped_at_value < order["order_date"]:
                     raise ValueError("Дата отгрузки не может быть раньше даты заказа.")
                 cur.execute(
@@ -300,7 +372,9 @@ def shipment_detail(request: Request, shipment_id: int):
             si.shipment_item_id,
             p.name AS product_name,
             si.quantity,
-            fgs.batch_number
+            fgs.batch_number,
+            p.unit,
+            fgs.expiry_date
         FROM shipment_items AS si
         JOIN products AS p ON p.product_id = si.product_id
         LEFT JOIN finished_goods_stock AS fgs ON fgs.finished_stock_id = si.finished_stock_id
@@ -314,6 +388,8 @@ def shipment_detail(request: Request, shipment_id: int):
         extra_actions.append({"label": "Добавить позицию", "url": f"/shipments/{shipment_id}/items/new"})
     if has_action(user, "shipments.change_status") and get_next_shipment_statuses(shipment):
         extra_actions.append({"label": "Изменить статус", "url": f"/shipments/{shipment_id}/status"})
+    if has_action(user, "shipments.report"):
+        extra_actions.append({"label": "Отчёт по отгрузке", "url": f"/shipments/{shipment_id}/report"})
     return render_template(
         request,
         "detail.html",
@@ -333,7 +409,7 @@ def shipment_detail(request: Request, shipment_id: int):
             "sections": [
                 {
                     "title": "Состав отгрузки",
-                    "headers": [("shipment_item_id", "ID"), ("product_name", "Продукция"), ("quantity", "Количество"), ("batch_number", "Партия")],
+                    "headers": [("shipment_item_id", "ID"), ("product_name", "Продукция"), ("quantity", "Количество"), ("unit", "Ед."), ("batch_number", "Партия"), ("expiry_date", "Годен до")],
                     "rows": items,
                     "empty_message": "Состав отгрузки ещё не добавлен.",
                 }
@@ -392,6 +468,7 @@ def shipment_item_new(
             raise ValueError("Количество должно быть больше нуля.")
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            ensure_order_paid_for_shipping(conn, shipment["order_id"])
             shipment_item_id = next_id(conn, "shipment_items", "shipment_item_id")
             with conn.cursor() as cur:
                 cur.execute(
@@ -427,21 +504,9 @@ def shipment_item_new(
                 if stock["expiry_date"] < date.today():
                     raise ValueError("Нельзя отгружать просроченную партию готовой продукции.")
                 if stock["quantity_current"] < quantity_value:
-                    raise ValueError("На складе недостаточно готовой продукции для отгрузки.")
+                    raise ValueError("Недостаточно готовой продукции.")
 
-                cur.execute(
-                    """
-                    SELECT 1
-                    FROM quality_checks
-                    WHERE production_batch_id = %s
-                      AND check_type = 'finished_product'
-                      AND result_code = 'failed'
-                    LIMIT 1
-                    """,
-                    (stock["production_batch_id"],),
-                )
-                if cur.fetchone():
-                    raise ValueError("Нельзя отгружать партию готовой продукции с проваленной проверкой качества.")
+                validate_finished_batch_quality(cur, stock["production_batch_id"])
 
                 cur.execute(
                     """
@@ -452,8 +517,8 @@ def shipment_item_new(
                     (order_item_id_value,),
                 )
                 shipped = cur.fetchone()
-                if shipped["shipped_quantity"] + quantity_value > order_item["quantity"]:
-                    raise ValueError("Нельзя отгрузить больше, чем заказано в позиции заказа.")
+                if Decimal(shipped["shipped_quantity"]) + quantity_value > Decimal(order_item["quantity"]):
+                    raise ValueError("Количество отгрузки превышает объём заказа.")
 
                 cur.execute(
                     """
@@ -482,7 +547,7 @@ def shipment_item_new(
                     (quantity_value, finished_stock_id_value, quantity_value),
                 )
                 if cur.rowcount != 1:
-                    raise ValueError("Не удалось списать готовую продукцию со склада.")
+                    raise ValueError("Не удалось корректно списать готовую продукцию со склада.")
         set_flash(request, "Позиция отгрузки успешно добавлена, остаток готовой продукции уменьшен.")
         return redirect_to(f"/shipments/{shipment_id}")
     except ValueError as exc:
@@ -544,6 +609,10 @@ def shipment_status_update(request: Request, shipment_id: int, status_code: str 
             raise ValueError("Не выбран новый статус отгрузки.")
         validate_shipment_status_change(shipment, new_status)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            if new_status in {"shipped", "delivered"}:
+                ensure_order_paid_for_shipping(conn, shipment["order_id"])
+                ensure_shipment_has_items(conn, shipment_id)
+
             with conn.cursor() as cur:
                 if new_status == "shipped":
                     cur.execute(
@@ -576,4 +645,65 @@ def shipment_status_update(request: Request, shipment_id: int, status_code: str 
             "error_message": error_message,
         },
         status_code=400,
+    )
+
+
+@router.get("/shipments/{shipment_id}/report")
+def shipment_report(request: Request, shipment_id: int):
+    user = authorize_action(request, "shipments.report", "У вас нет прав на просмотр отчёта по отгрузке.")
+    if not isinstance(user, dict):
+        return user
+    shipment = fetch_shipment_for_user(shipment_id, user)
+    if not shipment:
+        return render_template(request, "error.html", {"title": "Отгрузка не найдена", "message": "Отчёт по этой отгрузке недоступен."}, status_code=404)
+
+    report = fetch_one(
+        """
+        SELECT
+            s.shipment_id,
+            s.shipment_number,
+            s.shipped_at,
+            s.status_code,
+            s.delivery_address,
+            s.waybill_number,
+            s.note,
+            o.order_number,
+            COALESCE(c.company_name, c.full_name) AS customer_name,
+            u.full_name AS employee_name
+        FROM shipments AS s
+        JOIN customer_orders AS o ON o.order_id = s.order_id
+        JOIN customers AS c ON c.customer_id = o.customer_id
+        LEFT JOIN users AS u ON u.user_id = s.created_by_user_id
+        WHERE s.shipment_id = %s
+        """,
+        (shipment_id,),
+    )
+    items = fetch_all(
+        """
+        SELECT
+            p.name AS product_name,
+            si.order_item_id,
+            fgs.batch_number,
+            si.quantity,
+            p.unit,
+            fgs.expiry_date
+        FROM shipment_items AS si
+        JOIN products AS p ON p.product_id = si.product_id
+        LEFT JOIN finished_goods_stock AS fgs ON fgs.finished_stock_id = si.finished_stock_id
+        WHERE si.shipment_id = %s
+        ORDER BY si.shipment_item_id
+        """,
+        (shipment_id,),
+    )
+    total_quantity = sum(Decimal(row["quantity"]) for row in items) if items else Decimal("0")
+    return render_template(
+        request,
+        "shipment_report.html",
+        {
+            "title": f"Отчёт по отгрузке {report['shipment_number']}",
+            "back_url": f"/shipments/{shipment_id}",
+            "shipment": report,
+            "items": items,
+            "total_quantity": total_quantity,
+        },
     )

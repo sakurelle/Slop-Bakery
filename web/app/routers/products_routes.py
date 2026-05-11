@@ -44,6 +44,20 @@ def products_list(request: Request):
                 ON fgs.product_id = p.product_id
                AND fgs.quantity_current > 0
                AND fgs.expiry_date >= CURRENT_DATE
+               AND EXISTS (
+                   SELECT 1
+                   FROM quality_checks AS qc_passed
+                   WHERE qc_passed.production_batch_id = fgs.production_batch_id
+                     AND qc_passed.check_type = 'finished_product'
+                     AND qc_passed.result_code = 'passed'
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM quality_checks AS qc_failed
+                   WHERE qc_failed.production_batch_id = fgs.production_batch_id
+                     AND qc_failed.check_type = 'finished_product'
+                     AND qc_failed.result_code = 'failed'
+               )
             WHERE p.is_active = TRUE
             GROUP BY p.product_id, p.name, p.category, p.unit, p.price, p.shelf_life_days, p.is_active
             ORDER BY p.product_id
@@ -148,6 +162,20 @@ def product_detail(request: Request, product_id: int):
                 ON fgs.product_id = p.product_id
                AND fgs.quantity_current > 0
                AND fgs.expiry_date >= CURRENT_DATE
+               AND EXISTS (
+                   SELECT 1
+                   FROM quality_checks AS qc_passed
+                   WHERE qc_passed.production_batch_id = fgs.production_batch_id
+                     AND qc_passed.check_type = 'finished_product'
+                     AND qc_passed.result_code = 'passed'
+               )
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM quality_checks AS qc_failed
+                   WHERE qc_failed.production_batch_id = fgs.production_batch_id
+                     AND qc_failed.check_type = 'finished_product'
+                     AND qc_failed.result_code = 'failed'
+               )
             WHERE p.product_id = %s
               AND p.is_active = TRUE
             GROUP BY p.product_id, p.name, p.category, p.unit, p.price, p.shelf_life_days, p.is_active

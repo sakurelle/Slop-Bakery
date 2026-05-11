@@ -83,10 +83,13 @@ def get_responsible_users():
 def get_tech_cards():
     return fetch_all(
         """
-        SELECT tech_card_id, card_number || ' / v' || version::TEXT AS card_label
-        FROM tech_cards
+        SELECT
+            tc.tech_card_id,
+            tc.card_number || ' / v' || tc.version::TEXT || ' / ' || p.name AS card_label
+        FROM tech_cards AS tc
+        JOIN products AS p ON p.product_id = tc.product_id
         WHERE status_code = 'active'
-        ORDER BY card_number, version DESC
+        ORDER BY p.name, tc.card_number, tc.version DESC
         """
     )
 
@@ -178,7 +181,7 @@ def validate_production_status_change(batch: dict, new_status: str):
         raise ValueError("Недопустимый переход статуса производственной партии.")
 
 
-def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Decimal, production_day: date):
+def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Decimal, production_day: date, apply_changes: bool = True):
     with conn.cursor() as cur:
         cur.execute(
             """
@@ -206,27 +209,51 @@ def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Deci
 
             cur.execute(
                 """
+                SELECT 1
+                FROM raw_material_stock AS rms
+                WHERE rms.material_id = %s
+                  AND rms.quantity_current > 0
+                  AND rms.expiry_date >= %s
+                LIMIT 1
+                """,
+                (item["material_id"], production_day),
+            )
+            has_any_stock = cur.fetchone()
+
+            cur.execute(
+                """
                 SELECT
                     rms.stock_id,
                     rms.quantity_current,
                     rms.expiry_date
                 FROM raw_material_stock AS rms
-                LEFT JOIN quality_checks AS qc
-                    ON qc.delivery_item_id = rms.delivery_item_id
-                   AND qc.check_type = 'raw_material'
-                   AND qc.result_code = 'failed'
                 WHERE rms.material_id = %s
                   AND rms.quantity_current > 0
                   AND rms.expiry_date >= %s
-                  AND qc.quality_check_id IS NULL
+                  AND EXISTS (
+                      SELECT 1
+                      FROM quality_checks AS qc_passed
+                      WHERE qc_passed.delivery_item_id = rms.delivery_item_id
+                        AND qc_passed.check_type = 'raw_material'
+                        AND qc_passed.result_code = 'passed'
+                  )
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM quality_checks AS qc_failed
+                      WHERE qc_failed.delivery_item_id = rms.delivery_item_id
+                        AND qc_failed.check_type = 'raw_material'
+                        AND qc_failed.result_code = 'failed'
+                  )
                 ORDER BY rms.expiry_date, rms.stock_id
                 """,
                 (item["material_id"], production_day),
             )
             stock_rows = cur.fetchall()
+            if has_any_stock and not stock_rows:
+                raise ValueError(f"Сырьё «{item['material_name']}» нельзя использовать: нет успешной проверки качества.")
             available_qty = sum(Decimal(row["quantity_current"]) for row in stock_rows)
             if available_qty < required_qty:
-                raise ValueError(f"Недостаточно доступного сырья «{item['material_name']}» для запуска производства.")
+                raise ValueError(f"Недостаточно сырья «{item['material_name']}» для запуска производства.")
 
             remaining = required_qty
             allocations = []
@@ -238,6 +265,9 @@ def consume_materials_for_production(conn, tech_card_id: int, produced_qty: Deci
                 allocations.append((row["stock_id"], take_qty))
                 remaining -= take_qty
             consumptions.append(allocations)
+
+        if not apply_changes:
+            return
 
         for allocations in consumptions:
             for stock_id, take_qty in allocations:
@@ -407,6 +437,8 @@ def production_new(
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             validate_responsible_user(conn, responsible_user_id_value)
             tech_card = validate_tech_card(conn, tech_card_id_value, product_id_value, production_dt.date())
+            if status_value in {"in_progress", "completed"}:
+                consume_materials_for_production(conn, tech_card_id_value, produced_qty, production_dt.date(), apply_changes=False)
 
             production_batch_id = next_id(conn, "production_batches", "production_batch_id")
             batch_number = f"PB-WEB-{production_batch_id:04d}"
@@ -517,6 +549,8 @@ def production_status_update(request: Request, production_batch_id: int, status_
             validate_responsible_user(conn, batch["responsible_user_id"])
             tech_card = validate_tech_card(conn, batch["tech_card_id"], batch["product_id"], batch["production_date"].date())
 
+            if new_status == "in_progress":
+                consume_materials_for_production(conn, batch["tech_card_id"], Decimal(batch["quantity_produced"]), batch["production_date"].date(), apply_changes=False)
             if new_status == "completed":
                 finalize_production_batch(conn, batch, tech_card)
 

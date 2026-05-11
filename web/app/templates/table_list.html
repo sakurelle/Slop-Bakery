@@ -41,7 +41,7 @@
                     {% for _, label in headers %}
                     <th>{{ label }}</th>
                     {% endfor %}
-                    {% set has_row_actions = rows and rows[0]._detail_url is defined %}
+                    {% set has_row_actions = rows and (rows[0]._detail_url is defined or rows[0]._row_actions is defined or rows[0]._row_forms is defined) %}
                     {% if has_row_actions %}
                     <th class="text-end">Действия</th>
                     {% endif %}
@@ -53,8 +53,22 @@
                     {% for key, _ in headers %}
                     <td>{{ display_value(key, row[key]) }}</td>
                     {% endfor %}
-                    {% if row._detail_url is defined %}
-                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Открыть</a></td>
+                    {% if row._detail_url is defined or row._row_actions is defined or row._row_forms is defined %}
+                    <td class="text-end">
+                        <div class="d-inline-flex gap-2 flex-wrap justify-content-end">
+                            {% if row._detail_url is defined %}
+                            <a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Открыть</a>
+                            {% endif %}
+                            {% for action in row._row_actions or [] %}
+                            <a href="{{ action.url }}" class="btn btn-sm {{ action.class or 'btn-outline-primary' }}">{{ action.label }}</a>
+                            {% endfor %}
+                            {% for action in row._row_forms or [] %}
+                            <form action="{{ action.action }}" method="post" class="d-inline">
+                                <button type="submit" class="btn btn-sm {{ action.class or 'btn-outline-primary' }}">{{ action.label }}</button>
+                            </form>
+                            {% endfor %}
+                        </div>
+                    </td>
                     {% endif %}
                 </tr>
                 {% else %}
