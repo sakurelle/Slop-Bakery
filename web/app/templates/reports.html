@@ -3,8 +3,8 @@
 {% block content %}
 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end mb-4 gap-3">
     <div>
-        <h1 class="h2 mb-1">Reports</h1>
-        <p class="text-secondary mb-0">Operational reports over the selected period.</p>
+        <h1 class="h2 mb-1">Отчёты</h1>
+        <p class="text-secondary mb-0">Операционные отчёты за выбранный период.</p>
     </div>
 </div>
 
@@ -12,15 +12,15 @@
     <div class="card-body">
         <form action="/reports" method="get" class="row g-3">
             <div class="col-md-4">
-                <label class="form-label">Start Date</label>
+                <label class="form-label">Дата начала</label>
                 <input type="date" class="form-control" name="start_date" value="{{ start_date }}">
             </div>
             <div class="col-md-4">
-                <label class="form-label">End Date</label>
+                <label class="form-label">Дата окончания</label>
                 <input type="date" class="form-control" name="end_date" value="{{ end_date }}">
             </div>
             <div class="col-md-4 d-flex align-items-end">
-                <button type="submit" class="btn btn-bakery w-100">Refresh Reports</button>
+                <button type="submit" class="btn btn-bakery w-100">Обновить отчёты</button>
             </div>
         </form>
     </div>
@@ -46,7 +46,7 @@
                     {% endfor %}
                 </tr>
                 {% else %}
-                <tr><td colspan="{{ section.headers|length }}" class="text-secondary">No data for this report.</td></tr>
+                <tr><td colspan="{{ section.headers|length }}" class="text-secondary">По этому отчёту данных нет.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

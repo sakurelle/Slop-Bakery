@@ -3,8 +3,8 @@
 {% block content %}
 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end mb-4 gap-3">
     <div>
-        <h1 class="h2 mb-1">Audit Log</h1>
-        <p class="text-secondary mb-0">Database-triggered audit events for protected operations.</p>
+        <h1 class="h2 mb-1">Журнал аудита</h1>
+        <p class="text-secondary mb-0">События аудита, сформированные триггерами базы данных.</p>
     </div>
 </div>
 
@@ -12,35 +12,35 @@
     <div class="card-body">
         <form action="/audit" method="get" class="row g-3">
             <div class="col-md-3">
-                <label class="form-label">User</label>
+                <label class="form-label">Пользователь</label>
                 <select class="form-select" name="user_id">
                     {% for option in user_options %}
-                    <option value="{{ option.value }}" {% if user_id|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    <option value="{{ option.value }}" {% if user_id|string == option.value|string %}selected{% endif %}>{{ display_value('user_id', option.label) }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label">Table</label>
+                <label class="form-label">Таблица</label>
                 <select class="form-select" name="table_name">
                     {% for option in table_options %}
-                    <option value="{{ option.value }}" {% if table_name|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    <option value="{{ option.value }}" {% if table_name|string == option.value|string %}selected{% endif %}>{{ display_value('table_name', option.label) }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label">Action</label>
+                <label class="form-label">Действие</label>
                 <select class="form-select" name="action_type">
                     {% for option in action_options %}
-                    <option value="{{ option.value }}" {% if action_type|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    <option value="{{ option.value }}" {% if action_type|string == option.value|string %}selected{% endif %}>{{ display_value('action_type', option.label) }}</option>
                     {% endfor %}
                 </select>
             </div>
             <div class="col-md-3">
-                <label class="form-label">Date</label>
+                <label class="form-label">Дата</label>
                 <input type="date" class="form-control" name="changed_date" value="{{ changed_date }}">
             </div>
             <div class="col-12">
-                <button type="submit" class="btn btn-bakery">Apply Filters</button>
+                <button type="submit" class="btn btn-bakery">Применить фильтры</button>
             </div>
         </form>
     </div>
@@ -52,12 +52,12 @@
             <thead>
                 <tr>
                     <th>ID</th>
-                    <th>Changed At</th>
-                    <th>User</th>
-                    <th>Action</th>
-                    <th>Table</th>
-                    <th>Record</th>
-                    <th>Success</th>
+                    <th>Когда</th>
+                    <th>Пользователь</th>
+                    <th>Действие</th>
+                    <th>Таблица</th>
+                    <th>Запись</th>
+                    <th>Успех</th>
                 </tr>
             </thead>
             <tbody>
@@ -65,14 +65,14 @@
                 <tr>
                     <td>{{ row.audit_id }}</td>
                     <td>{{ row.changed_at }}</td>
-                    <td>{{ row.username }}</td>
-                    <td>{{ row.action_type }}</td>
+                    <td>{{ display_value('username', row.username) }}</td>
+                    <td>{{ display_value('action_type', row.action_type) }}</td>
                     <td>{{ row.table_name }}</td>
                     <td>{{ row.record_id }}</td>
-                    <td>{{ row.success }}</td>
+                    <td>{{ display_value('success', row.success) }}</td>
                 </tr>
                 {% else %}
-                <tr><td colspan="7" class="text-secondary">No audit events match the selected filters.</td></tr>
+                <tr><td colspan="7" class="text-secondary">По выбранным фильтрам записи аудита не найдены.</td></tr>
                 {% endfor %}
             </tbody>
         </table>

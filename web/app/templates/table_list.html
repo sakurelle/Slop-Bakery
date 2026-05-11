@@ -7,7 +7,7 @@
         {% if subtitle %}<p class="text-secondary mb-0">{{ subtitle }}</p>{% endif %}
     </div>
     {% if create_url %}
-    <a href="{{ create_url }}" class="btn btn-bakery">{{ create_label or "Create" }}</a>
+    <a href="{{ create_url }}" class="btn btn-bakery">{{ create_label or "Создать" }}</a>
     {% endif %}
 </div>
 
@@ -20,13 +20,13 @@
                 <label class="form-label">{{ field.label }}</label>
                 <select class="form-select" name="{{ field.name }}">
                     {% for option in field.options %}
-                    <option value="{{ option.value }}" {% if field.value|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    <option value="{{ option.value }}" {% if field.value|string == option.value|string %}selected{% endif %}>{{ display_value(field.name, option.label) }}</option>
                     {% endfor %}
                 </select>
             </div>
             {% endfor %}
             <div class="col-12">
-                <button type="submit" class="btn btn-bakery">Apply Filters</button>
+                <button type="submit" class="btn btn-bakery">Применить фильтры</button>
             </div>
         </form>
     </div>
@@ -43,7 +43,7 @@
                     {% endfor %}
                     {% set has_row_actions = rows and rows[0]._detail_url is defined %}
                     {% if has_row_actions %}
-                    <th class="text-end">Actions</th>
+                    <th class="text-end">Действия</th>
                     {% endif %}
                 </tr>
             </thead>
@@ -51,15 +51,15 @@
                 {% for row in rows %}
                 <tr class="{{ row._row_class if row._row_class is defined else '' }}">
                     {% for key, _ in headers %}
-                    <td>{{ row[key] }}</td>
+                    <td>{{ display_value(key, row[key]) }}</td>
                     {% endfor %}
                     {% if row._detail_url is defined %}
-                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Open</a></td>
+                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Открыть</a></td>
                     {% endif %}
                 </tr>
                 {% else %}
                 <tr>
-                    <td colspan="{{ headers|length + (1 if has_row_actions else 0) }}" class="text-secondary">No records found.</td>
+                    <td colspan="{{ headers|length + (1 if has_row_actions else 0) }}" class="text-secondary">Записи не найдены.</td>
                 </tr>
                 {% endfor %}
             </tbody>

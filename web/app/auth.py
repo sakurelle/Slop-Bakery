@@ -3,12 +3,73 @@ from fastapi.responses import RedirectResponse
 from passlib.context import CryptContext
 
 from .database import fetch_one, get_db
-from .permissions import can_access, get_primary_role, visible_sections
+from .permissions import can_access, get_primary_role, get_role_label, visible_sections
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 SESSION_KEY = "user"
 FLASH_KEY = "_flash"
+DISPLAY_LABELS = {
+    "draft": "Черновик",
+    "confirmed": "Подтверждён",
+    "in_production": "В производстве",
+    "ready": "Готов",
+    "shipped": "Отгружен",
+    "completed": "Завершён",
+    "cancelled": "Отменён",
+    "issued": "Выставлен",
+    "paid": "Оплачен",
+    "overdue": "Просрочен",
+    "planned": "Запланирован",
+    "delivered": "Доставлен",
+    "received": "Получена",
+    "accepted": "Принята",
+    "rejected": "Отклонена",
+    "in_progress": "В процессе",
+    "passed": "Соответствует",
+    "failed": "Не соответствует",
+    "conditional": "Условно",
+    "active": "Активен",
+    "blocked": "Заблокирован",
+    "disabled": "Отключён",
+    "raw_material": "Сырьё",
+    "finished_product": "Готовая продукция",
+    "individual": "Физическое лицо",
+    "company": "Компания",
+    "INSERT": "Добавление",
+    "UPDATE": "Изменение",
+    "DELETE": "Удаление",
+    "LOGIN": "Вход",
+    "LOGOUT": "Выход",
+    "Draft": "Черновик",
+    "Confirmed": "Подтверждён",
+    "In Production": "В производстве",
+    "Ready": "Готов",
+    "Shipped": "Отгружен",
+    "Completed": "Завершён",
+    "Cancelled": "Отменён",
+    "Issued": "Выставлен",
+    "Paid": "Оплачен",
+    "Overdue": "Просрочен",
+    "Planned": "Запланирован",
+    "Delivered": "Доставлен",
+    "Received": "Получена",
+    "Accepted": "Принята",
+    "Rejected": "Отклонена",
+    "In Progress": "В процессе",
+    "Passed": "Соответствует",
+    "Failed": "Не соответствует",
+    "Conditional": "Условно",
+    "Active": "Активен",
+    "Blocked": "Заблокирован",
+    "Disabled": "Отключён",
+    "Administrator": "Администратор",
+    "Technologist": "Технолог",
+    "Warehouse Worker": "Складской работник",
+    "Quality Control": "Сотрудник ОТК",
+    "Client": "Клиент",
+    "system": "система",
+}
 
 
 def _load_user(field_name: str, field_value):
@@ -119,12 +180,32 @@ def logout_user(request: Request) -> None:
     request.session.clear()
 
 
+def _translate_string(value: str) -> str:
+    if value in DISPLAY_LABELS:
+        return DISPLAY_LABELS[value]
+    if ", " in value:
+        return ", ".join(_translate_string(part.strip()) for part in value.split(","))
+    return value
+
+
+def display_value(_key, value):
+    if isinstance(value, bool):
+        return "Да" if value else "Нет"
+    if value is None or value == "":
+        return "—"
+    if isinstance(value, str):
+        return _translate_string(value)
+    return value
+
+
 def render_template(request: Request, template_name: str, context=None, status_code: int = 200):
     current_user = get_current_user(request)
     payload = {
         "request": request,
         "current_user": current_user,
         "primary_role": get_primary_role(current_user),
+        "primary_role_label": get_role_label(get_primary_role(current_user)),
+        "display_value": display_value,
         "nav_items": visible_sections(current_user),
         "flash": pop_flash(request),
         "can_access": can_access,
@@ -147,8 +228,8 @@ def authorize_section(request: Request, section: str):
             request,
             "error.html",
             {
-                "title": "Access denied",
-                "message": "You do not have permission to open this section.",
+                "title": "Доступ запрещён",
+                "message": "У вас нет прав для открытия этого раздела.",
             },
             status_code=403,
         )

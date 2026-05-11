@@ -3,7 +3,7 @@
 ## Запуск через Docker Compose
 
 1. Скопировать `configuration/.env.example` в `configuration/.env`.
-2. При необходимости изменить параметры подключения и `APP_SECRET_KEY`.
+2. При необходимости изменить параметры подключения, `APP_SECRET_KEY`, `WEB_PORT` и `POSTGRES_PORT`.
 3. Запустить сервисы:
 
 ```bash
@@ -13,7 +13,27 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 После запуска:
 
 - БД PostgreSQL работает как сервис `db`;
-- веб-интерфейс доступен на `http://localhost:8000`.
+- веб-интерфейс доступен на `http://localhost:8000`;
+- веб-контейнер подключается к базе по адресу `db:5432`.
+
+## Запуск на Windows
+
+1. Установить Docker Desktop.
+2. Открыть PowerShell в корне проекта.
+3. При необходимости разрешить выполнение локальных скриптов:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+4. Создать `configuration/.env`.
+5. Если порт `5432` на хосте занят, изменить внешний порт, например:
+
+```env
+POSTGRES_PORT=15432
+```
+
+Это влияет только на публикацию порта на хосте. Внутри Docker PostgreSQL продолжает слушать `5432`.
 
 ## Пересоздание базы данных
 
@@ -29,7 +49,14 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 .\scripts\reset_db.ps1
 ```
 
-Скрипты поднимают `db`, выполняют `database/initialization/99_run_all.sql` и затем запускают проверочные SQL-запросы.
+Скрипты:
+
+- поднимают сервис `db`;
+- ждут готовности PostgreSQL через `pg_isready`;
+- переходят в каталог `database/initialization`;
+- выполняют `99_run_all.sql`.
+
+Отдельный запуск `07_test_queries.sql` после этого не требуется, потому что он уже подключается из `99_run_all.sql`.
 
 ## Запуск только веб-интерфейса
 
@@ -64,7 +91,7 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 
 ```bash
 docker compose --env-file configuration/.env -f configuration/docker-compose.yml exec -T db \
-  psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f /workspace/database/checks/07_test_queries.sql
+  sh -lc 'cd /workspace/database/checks && psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -f 07_test_queries.sql'
 ```
 
 Для веб-интерфейса см. `docs/launch/web_interface_guide.md`.

@@ -3,41 +3,41 @@
 {% block content %}
 <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end mb-4 gap-3">
     <div>
-        <h1 class="h2 mb-1">Dashboard</h1>
-        <p class="text-secondary mb-0">Overview of the bakery database activity and audit trail.</p>
+        <h1 class="h2 mb-1">Главная</h1>
+        <p class="text-secondary mb-0">Сводка по работе базы данных хлебозавода и журналу аудита.</p>
     </div>
     <div class="dashboard-user-chip">
-        <span class="small text-uppercase">Current User</span>
+        <span class="small text-uppercase">Текущий пользователь</span>
         <strong>{{ current_user.username }}</strong>
     </div>
 </div>
 
 <div class="row g-3 mb-4">
-    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Customers</span><strong>{{ stats.customer_count }}</strong></div></div>
-    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Orders</span><strong>{{ stats.order_count }}</strong></div></div>
-    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Products</span><strong>{{ stats.product_count }}</strong></div></div>
-    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Materials</span><strong>{{ stats.material_count }}</strong></div></div>
-    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Orders in Work</span><strong>{{ stats.active_order_count }}</strong></div></div>
-    <div class="col-md-6 col-xl-3"><div class="stat-card warning"><span>Below Min Stock</span><strong>{{ stats.low_stock_material_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Клиенты</span><strong>{{ stats.customer_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Заказы</span><strong>{{ stats.order_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Продукция</span><strong>{{ stats.product_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Сырьё</span><strong>{{ stats.material_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card"><span>Заказы в работе</span><strong>{{ stats.active_order_count }}</strong></div></div>
+    <div class="col-md-6 col-xl-3"><div class="stat-card warning"><span>Ниже минимума</span><strong>{{ stats.low_stock_material_count }}</strong></div></div>
 </div>
 
 <div class="row g-4">
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
-            <div class="card-header"><strong>Recent Orders</strong></div>
+            <div class="card-header"><strong>Последние заказы</strong></div>
             <div class="table-responsive">
                 <table class="table align-middle mb-0">
-                    <thead><tr><th>Order</th><th>Customer</th><th>Status</th><th>Date</th></tr></thead>
+                    <thead><tr><th>Заказ</th><th>Клиент</th><th>Статус</th><th>Дата</th></tr></thead>
                     <tbody>
                     {% for row in recent_orders %}
                         <tr>
                             <td>{{ row.order_number }}</td>
                             <td>{{ row.customer_name }}</td>
-                            <td>{{ row.status_code }}</td>
+                            <td>{{ display_value('status_code', row.status_code) }}</td>
                             <td>{{ row.order_date }}</td>
                         </tr>
                     {% else %}
-                        <tr><td colspan="4" class="text-secondary">No recent orders.</td></tr>
+                        <tr><td colspan="4" class="text-secondary">Последних заказов нет.</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
@@ -46,20 +46,20 @@
     </div>
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
-            <div class="card-header"><strong>Recent Audit Events</strong></div>
+            <div class="card-header"><strong>Последние события аудита</strong></div>
             <div class="table-responsive">
                 <table class="table align-middle mb-0">
-                    <thead><tr><th>Changed At</th><th>User</th><th>Action</th><th>Table</th></tr></thead>
+                    <thead><tr><th>Когда</th><th>Пользователь</th><th>Действие</th><th>Таблица</th></tr></thead>
                     <tbody>
                     {% for row in recent_audit %}
                         <tr>
                             <td>{{ row.changed_at }}</td>
                             <td>{{ row.username }}</td>
-                            <td>{{ row.action_type }}</td>
+                            <td>{{ display_value('action_type', row.action_type) }}</td>
                             <td>{{ row.table_name }}</td>
                         </tr>
                     {% else %}
-                        <tr><td colspan="4" class="text-secondary">No audit entries.</td></tr>
+                        <tr><td colspan="4" class="text-secondary">Записей аудита нет.</td></tr>
                     {% endfor %}
                     </tbody>
                 </table>
@@ -69,17 +69,17 @@
     {% if admin_users %}
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
-            <div class="card-header"><strong>Users</strong></div>
+            <div class="card-header"><strong>Пользователи</strong></div>
             <div class="table-responsive">
                 <table class="table align-middle mb-0">
-                    <thead><tr><th>Username</th><th>Full Name</th><th>Status</th><th>Roles</th></tr></thead>
+                    <thead><tr><th>Логин</th><th>ФИО</th><th>Статус</th><th>Роли</th></tr></thead>
                     <tbody>
                     {% for row in admin_users %}
                         <tr>
                             <td>{{ row.username }}</td>
                             <td>{{ row.full_name }}</td>
-                            <td>{{ row.status_code }}</td>
-                            <td>{{ row.roles }}</td>
+                            <td>{{ display_value('status_code', row.status_code) }}</td>
+                            <td>{{ display_value('roles', row.roles) }}</td>
                         </tr>
                     {% endfor %}
                     </tbody>
@@ -89,15 +89,15 @@
     </div>
     <div class="col-lg-6">
         <div class="card shadow-sm h-100">
-            <div class="card-header"><strong>Roles</strong></div>
+            <div class="card-header"><strong>Роли</strong></div>
             <div class="table-responsive">
                 <table class="table align-middle mb-0">
-                    <thead><tr><th>Code</th><th>Name</th><th>Assigned Users</th></tr></thead>
+                    <thead><tr><th>Код</th><th>Название</th><th>Назначено пользователям</th></tr></thead>
                     <tbody>
                     {% for row in roles %}
                         <tr>
                             <td>{{ row.role_code }}</td>
-                            <td>{{ row.role_name }}</td>
+                            <td>{{ display_value('role_name', row.role_name) }}</td>
                             <td>{{ row.assigned_users }}</td>
                         </tr>
                     {% endfor %}

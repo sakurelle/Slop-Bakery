@@ -98,20 +98,20 @@ def reports_page(
     )
 
     report_sections = [
-        {"title": "Raw Material Stock", "headers": [("material_name", "Material"), ("quantity_on_hand", "Quantity"), ("unit", "Unit")], "rows": material_stock},
-        {"title": "Materials Below Minimum Stock", "headers": [("material_name", "Material"), ("min_stock_qty", "Minimum"), ("quantity_on_hand", "Current"), ("unit", "Unit")], "rows": low_stock},
-        {"title": "Finished Goods Stock", "headers": [("product_name", "Product"), ("quantity_on_hand", "Quantity"), ("unit", "Unit")], "rows": finished_stock},
-        {"title": "Orders for Period", "headers": [("order_number", "Order"), ("customer_name", "Customer"), ("order_date", "Order Date"), ("status_code", "Status")], "rows": orders},
-        {"title": "Sales for Period", "headers": [("product_name", "Product"), ("total_quantity", "Quantity"), ("total_amount", "Amount")], "rows": sales},
-        {"title": "Production for Period", "headers": [("product_name", "Product"), ("batch_number", "Batch"), ("production_date", "Production Date"), ("quantity_produced", "Produced"), ("quantity_defective", "Defective"), ("status_code", "Status")], "rows": production},
-        {"title": "Quality Checks for Period", "headers": [("check_type", "Type"), ("object_name", "Object"), ("checked_at", "Checked At"), ("result_code", "Result"), ("document_number", "Document")], "rows": quality},
+        {"title": "Остатки сырья", "headers": [("material_name", "Сырьё"), ("quantity_on_hand", "Количество"), ("unit", "Ед.")], "rows": material_stock},
+        {"title": "Сырьё ниже минимального остатка", "headers": [("material_name", "Сырьё"), ("min_stock_qty", "Минимум"), ("quantity_on_hand", "Текущий остаток"), ("unit", "Ед.")], "rows": low_stock},
+        {"title": "Остатки готовой продукции", "headers": [("product_name", "Продукция"), ("quantity_on_hand", "Количество"), ("unit", "Ед.")], "rows": finished_stock},
+        {"title": "Заказы за период", "headers": [("order_number", "Заказ"), ("customer_name", "Клиент"), ("order_date", "Дата заказа"), ("status_code", "Статус")], "rows": orders},
+        {"title": "Продажи за период", "headers": [("product_name", "Продукция"), ("total_quantity", "Количество"), ("total_amount", "Сумма")], "rows": sales},
+        {"title": "Производство за период", "headers": [("product_name", "Продукция"), ("batch_number", "Партия"), ("production_date", "Дата производства"), ("quantity_produced", "Произведено"), ("quantity_defective", "Брак"), ("status_code", "Статус")], "rows": production},
+        {"title": "Контроль качества за период", "headers": [("check_type", "Тип"), ("object_name", "Объект"), ("checked_at", "Дата проверки"), ("result_code", "Результат"), ("document_number", "Документ")], "rows": quality},
     ]
 
     return render_template(
         request,
         "reports.html",
         {
-            "title": "Reports",
+            "title": "Отчёты",
             "start_date": start_value,
             "end_date": end_value,
             "sections": report_sections,

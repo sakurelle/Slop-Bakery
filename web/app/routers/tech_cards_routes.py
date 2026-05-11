@@ -14,33 +14,33 @@ def tech_card_fields(products, statuses, approvers, data=None):
     return [
         {
             "name": "product_id",
-            "label": "Product",
+            "label": "Продукция",
             "type": "select",
             "required": True,
             "value": data.get("product_id", ""),
             "options": build_options(products, "product_id", "name"),
         },
-        {"name": "card_number", "label": "Card Number", "type": "text", "required": True, "value": data.get("card_number", "")},
-        {"name": "version", "label": "Version", "type": "number", "required": True, "min": "1", "value": data.get("version", "1")},
+        {"name": "card_number", "label": "Номер карты", "type": "text", "required": True, "value": data.get("card_number", "")},
+        {"name": "version", "label": "Версия", "type": "number", "required": True, "min": "1", "value": data.get("version", "1")},
         {
             "name": "status_code",
-            "label": "Status",
+            "label": "Статус",
             "type": "select",
             "required": True,
             "value": data.get("status_code", "draft"),
             "options": build_options(statuses, "status_code", "name"),
         },
-        {"name": "effective_from", "label": "Effective From", "type": "date", "required": True, "value": data.get("effective_from", "")},
-        {"name": "effective_to", "label": "Effective To", "type": "date", "value": data.get("effective_to", "")},
-        {"name": "baking_time_min", "label": "Baking Time (min)", "type": "number", "required": True, "min": "1", "value": data.get("baking_time_min", "")},
-        {"name": "baking_temperature_c", "label": "Baking Temperature (C)", "type": "number", "required": True, "step": "0.01", "min": "0.01", "value": data.get("baking_temperature_c", "")},
-        {"name": "process_description", "label": "Process Description", "type": "textarea", "required": True, "value": data.get("process_description", "")},
+        {"name": "effective_from", "label": "Действует с", "type": "date", "required": True, "value": data.get("effective_from", "")},
+        {"name": "effective_to", "label": "Действует до", "type": "date", "value": data.get("effective_to", "")},
+        {"name": "baking_time_min", "label": "Время выпечки (мин)", "type": "number", "required": True, "min": "1", "value": data.get("baking_time_min", "")},
+        {"name": "baking_temperature_c", "label": "Температура выпечки (C)", "type": "number", "required": True, "step": "0.01", "min": "0.01", "value": data.get("baking_temperature_c", "")},
+        {"name": "process_description", "label": "Описание процесса", "type": "textarea", "required": True, "value": data.get("process_description", "")},
         {
             "name": "approved_by_user_id",
-            "label": "Approved By",
+            "label": "Утвердил",
             "type": "select",
             "value": data.get("approved_by_user_id", ""),
-            "options": build_options(approvers, "user_id", "full_name", blank_label="Not approved yet"),
+            "options": build_options(approvers, "user_id", "full_name", blank_label="Пока не утверждено"),
         },
     ]
 
@@ -50,17 +50,17 @@ def recipe_item_fields(materials, data=None):
     return [
         {
             "name": "material_id",
-            "label": "Material",
+            "label": "Сырьё",
             "type": "select",
             "required": True,
             "value": data.get("material_id", ""),
             "options": build_options(materials, "material_id", "name"),
         },
-        {"name": "quantity", "label": "Quantity", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
-        {"name": "unit", "label": "Unit", "type": "text", "required": True, "value": data.get("unit", "kg")},
-        {"name": "stage", "label": "Stage", "type": "text", "value": data.get("stage", "")},
-        {"name": "waste_percent", "label": "Waste Percent", "type": "number", "step": "0.01", "min": "0", "max": "99.99", "value": data.get("waste_percent", "0")},
-        {"name": "note", "label": "Note", "type": "textarea", "value": data.get("note", "")},
+        {"name": "quantity", "label": "Количество", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
+        {"name": "unit", "label": "Единица измерения", "type": "text", "required": True, "value": data.get("unit", "kg")},
+        {"name": "stage", "label": "Этап", "type": "text", "value": data.get("stage", "")},
+        {"name": "waste_percent", "label": "Процент потерь", "type": "number", "step": "0.01", "min": "0", "max": "99.99", "value": data.get("waste_percent", "0")},
+        {"name": "note", "label": "Примечание", "type": "textarea", "value": data.get("note", "")},
     ]
 
 
@@ -90,20 +90,20 @@ def tech_cards_list(request: Request):
         request,
         "table_list.html",
         {
-            "title": "Tech Cards",
-            "subtitle": "Product technology cards and recipe compositions.",
+            "title": "Технологические карты",
+            "subtitle": "Технологические карты продукции и состав рецептур.",
             "headers": [
                 ("tech_card_id", "ID"),
-                ("card_number", "Card Number"),
-                ("product_name", "Product"),
-                ("version", "Version"),
-                ("status_code", "Status"),
-                ("effective_from", "Effective From"),
-                ("effective_to", "Effective To"),
+                ("card_number", "Номер карты"),
+                ("product_name", "Продукция"),
+                ("version", "Версия"),
+                ("status_code", "Статус"),
+                ("effective_from", "Действует с"),
+                ("effective_to", "Действует до"),
             ],
             "rows": rows,
             "create_url": "/tech-cards/new",
-            "create_label": "Add Tech Card",
+            "create_label": "Добавить техкарту",
         },
     )
 
@@ -116,7 +116,7 @@ def tech_card_new_page(request: Request):
     products = fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
     statuses = fetch_all("SELECT status_code, name FROM tech_card_statuses ORDER BY name")
     approvers = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
-    return render_template(request, "form.html", {"title": "Add Tech Card", "action": "/tech-cards/new", "fields": tech_card_fields(products, statuses, approvers), "back_url": "/tech-cards", "submit_label": "Create Tech Card"})
+    return render_template(request, "form.html", {"title": "Добавить техкарту", "action": "/tech-cards/new", "fields": tech_card_fields(products, statuses, approvers), "back_url": "/tech-cards", "submit_label": "Создать техкарту"})
 
 
 @router.post("/tech-cards/new")
@@ -166,22 +166,22 @@ def tech_card_new(
                     """,
                     (
                         tech_card_id,
-                        parse_int(product_id, "Product"),
+                        parse_int(product_id, "Продукция"),
                         clean_text(card_number),
-                        parse_int(version, "Version"),
+                        parse_int(version, "Версия"),
                         clean_text(status_code),
-                        parse_date(effective_from, "Effective From"),
-                        parse_date(effective_to, "Effective To", allow_none=True),
-                        parse_int(baking_time_min, "Baking Time"),
-                        parse_decimal(baking_temperature_c, "Baking Temperature"),
+                        parse_date(effective_from, "Действует с"),
+                        parse_date(effective_to, "Действует до", allow_none=True),
+                        parse_int(baking_time_min, "Время выпечки"),
+                        parse_decimal(baking_temperature_c, "Температура выпечки"),
                         clean_text(process_description),
-                        parse_int(approved_by_user_id, "Approved By", allow_none=True),
+                        parse_int(approved_by_user_id, "Утвердил", allow_none=True),
                     ),
                 )
-        set_flash(request, "Tech card created successfully.")
+        set_flash(request, "Технологическая карта успешно создана.")
         return redirect_to(f"/tech-cards/{tech_card_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Add Tech Card", "action": "/tech-cards/new", "fields": tech_card_fields(products, statuses, approvers, form_data), "back_url": "/tech-cards", "submit_label": "Create Tech Card", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": "Добавить техкарту", "action": "/tech-cards/new", "fields": tech_card_fields(products, statuses, approvers, form_data), "back_url": "/tech-cards", "submit_label": "Создать техкарту", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/tech-cards/{tech_card_id}")
@@ -200,7 +200,7 @@ def tech_card_detail(request: Request, tech_card_id: int):
         (tech_card_id,),
     )
     if not card:
-        return render_template(request, "error.html", {"title": "Tech card not found", "message": "Tech card record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Техкарта не найдена", "message": "Карточка техкарты не найдена."}, status_code=404)
     recipe_rows = fetch_all(
         """
         SELECT
@@ -227,25 +227,25 @@ def tech_card_detail(request: Request, tech_card_id: int):
             "title": card["card_number"],
             "back_url": "/tech-cards",
             "edit_url": f"/tech-cards/{tech_card_id}/edit",
-            "extra_actions": [{"label": "Add Recipe Item", "url": f"/tech-cards/{tech_card_id}/recipe/new"}],
+            "extra_actions": [{"label": "Добавить ингредиент", "url": f"/tech-cards/{tech_card_id}/recipe/new"}],
             "details": [
                 ("ID", card["tech_card_id"]),
-                ("Product", card["product_name"]),
-                ("Version", card["version"]),
-                ("Status", card["status_code"]),
-                ("Effective From", card["effective_from"]),
-                ("Effective To", card["effective_to"]),
-                ("Baking Time", card["baking_time_min"]),
-                ("Baking Temperature", card["baking_temperature_c"]),
-                ("Approved By", card["approved_by_name"]),
-                ("Process Description", card["process_description"]),
+                ("Продукция", card["product_name"]),
+                ("Версия", card["version"]),
+                ("Статус", card["status_code"]),
+                ("Действует с", card["effective_from"]),
+                ("Действует до", card["effective_to"]),
+                ("Время выпечки", card["baking_time_min"]),
+                ("Температура выпечки", card["baking_temperature_c"]),
+                ("Утвердил", card["approved_by_name"]),
+                ("Описание процесса", card["process_description"]),
             ],
             "sections": [
                 {
-                    "title": "Recipe Items",
-                    "headers": [("recipe_item_id", "ID"), ("material_name", "Material"), ("quantity", "Quantity"), ("unit", "Unit"), ("stage", "Stage"), ("waste_percent", "Waste %"), ("note", "Note")],
+                    "title": "Состав рецептуры",
+                    "headers": [("recipe_item_id", "ID"), ("material_name", "Сырьё"), ("quantity", "Количество"), ("unit", "Ед."), ("stage", "Этап"), ("waste_percent", "Потери %"), ("note", "Примечание")],
                     "rows": recipe_rows,
-                    "empty_message": "No recipe items added yet.",
+                    "empty_message": "Состав рецептуры ещё не заполнен.",
                 }
             ],
         },
@@ -259,11 +259,11 @@ def tech_card_edit_page(request: Request, tech_card_id: int):
         return user
     card = fetch_one("SELECT * FROM tech_cards WHERE tech_card_id = %s", (tech_card_id,))
     if not card:
-        return render_template(request, "error.html", {"title": "Tech card not found", "message": "Tech card record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Техкарта не найдена", "message": "Карточка техкарты не найдена."}, status_code=404)
     products = fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
     statuses = fetch_all("SELECT status_code, name FROM tech_card_statuses ORDER BY name")
     approvers = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
-    return render_template(request, "form.html", {"title": f"Edit Tech Card #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/edit", "fields": tech_card_fields(products, statuses, approvers, card), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Save Changes"})
+    return render_template(request, "form.html", {"title": f"Редактировать техкарту #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/edit", "fields": tech_card_fields(products, statuses, approvers, card), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Сохранить изменения"})
 
 
 @router.post("/tech-cards/{tech_card_id}/edit")
@@ -318,23 +318,23 @@ def tech_card_edit(
                     WHERE tech_card_id = %s
                     """,
                     (
-                        parse_int(product_id, "Product"),
+                        parse_int(product_id, "Продукция"),
                         clean_text(card_number),
-                        parse_int(version, "Version"),
+                        parse_int(version, "Версия"),
                         clean_text(status_code),
-                        parse_date(effective_from, "Effective From"),
-                        parse_date(effective_to, "Effective To", allow_none=True),
-                        parse_int(baking_time_min, "Baking Time"),
-                        parse_decimal(baking_temperature_c, "Baking Temperature"),
+                        parse_date(effective_from, "Действует с"),
+                        parse_date(effective_to, "Действует до", allow_none=True),
+                        parse_int(baking_time_min, "Время выпечки"),
+                        parse_decimal(baking_temperature_c, "Температура выпечки"),
                         clean_text(process_description),
-                        parse_int(approved_by_user_id, "Approved By", allow_none=True),
+                        parse_int(approved_by_user_id, "Утвердил", allow_none=True),
                         tech_card_id,
                     ),
                 )
-        set_flash(request, "Tech card updated successfully.")
+        set_flash(request, "Технологическая карта успешно обновлена.")
         return redirect_to(f"/tech-cards/{tech_card_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Edit Tech Card #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/edit", "fields": tech_card_fields(products, statuses, approvers, form_data), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Save Changes", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": f"Редактировать техкарту #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/edit", "fields": tech_card_fields(products, statuses, approvers, form_data), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Сохранить изменения", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/tech-cards/{tech_card_id}/recipe/new")
@@ -343,7 +343,7 @@ def recipe_item_new_page(request: Request, tech_card_id: int):
     if not isinstance(user, dict):
         return user
     materials = fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Add Recipe Item to Tech Card #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/recipe/new", "fields": recipe_item_fields(materials), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Add Recipe Item"})
+    return render_template(request, "form.html", {"title": f"Добавить ингредиент в техкарту #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/recipe/new", "fields": recipe_item_fields(materials), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Добавить ингредиент"})
 
 
 @router.post("/tech-cards/{tech_card_id}/recipe/new")
@@ -376,18 +376,18 @@ def recipe_item_new(
                     (
                         recipe_item_id,
                         tech_card_id,
-                        parse_int(material_id, "Material"),
-                        parse_decimal(quantity, "Quantity"),
+                        parse_int(material_id, "Сырьё"),
+                        parse_decimal(quantity, "Количество"),
                         clean_text(unit),
                         clean_text(stage),
-                        parse_decimal(waste_percent, "Waste Percent"),
+                        parse_decimal(waste_percent, "Процент потерь"),
                         clean_text(note),
                     ),
                 )
-        set_flash(request, "Recipe item added successfully.")
+        set_flash(request, "Ингредиент рецептуры успешно добавлен.")
         return redirect_to(f"/tech-cards/{tech_card_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Add Recipe Item to Tech Card #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/recipe/new", "fields": recipe_item_fields(materials, form_data), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Add Recipe Item", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": f"Добавить ингредиент в техкарту #{tech_card_id}", "action": f"/tech-cards/{tech_card_id}/recipe/new", "fields": recipe_item_fields(materials, form_data), "back_url": f"/tech-cards/{tech_card_id}", "submit_label": "Добавить ингредиент", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/recipe-items/{recipe_item_id}/edit")
@@ -397,9 +397,9 @@ def recipe_item_edit_page(request: Request, recipe_item_id: int):
         return user
     item = fetch_one("SELECT * FROM recipe_items WHERE recipe_item_id = %s", (recipe_item_id,))
     if not item:
-        return render_template(request, "error.html", {"title": "Recipe item not found", "message": "Recipe item record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Ингредиент не найден", "message": "Запись ингредиента не найдена."}, status_code=404)
     materials = fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Edit Recipe Item #{recipe_item_id}", "action": f"/recipe-items/{recipe_item_id}/edit", "fields": recipe_item_fields(materials, item), "back_url": f"/tech-cards/{item['tech_card_id']}", "submit_label": "Save Changes"})
+    return render_template(request, "form.html", {"title": f"Редактировать ингредиент #{recipe_item_id}", "action": f"/recipe-items/{recipe_item_id}/edit", "fields": recipe_item_fields(materials, item), "back_url": f"/tech-cards/{item['tech_card_id']}", "submit_label": "Сохранить изменения"})
 
 
 @router.post("/recipe-items/{recipe_item_id}/edit")
@@ -418,7 +418,7 @@ def recipe_item_edit(
         return user
     item = fetch_one("SELECT tech_card_id FROM recipe_items WHERE recipe_item_id = %s", (recipe_item_id,))
     if not item:
-        return render_template(request, "error.html", {"title": "Recipe item not found", "message": "Recipe item record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Ингредиент не найден", "message": "Запись ингредиента не найдена."}, status_code=404)
     materials = fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
     form_data = {"material_id": material_id, "quantity": quantity, "unit": unit, "stage": stage, "waste_percent": waste_percent, "note": note}
     try:
@@ -436,16 +436,16 @@ def recipe_item_edit(
                     WHERE recipe_item_id = %s
                     """,
                     (
-                        parse_int(material_id, "Material"),
-                        parse_decimal(quantity, "Quantity"),
+                        parse_int(material_id, "Сырьё"),
+                        parse_decimal(quantity, "Количество"),
                         clean_text(unit),
                         clean_text(stage),
-                        parse_decimal(waste_percent, "Waste Percent"),
+                        parse_decimal(waste_percent, "Процент потерь"),
                         clean_text(note),
                         recipe_item_id,
                     ),
                 )
-        set_flash(request, "Recipe item updated successfully.")
+        set_flash(request, "Ингредиент рецептуры успешно обновлён.")
         return redirect_to(f"/tech-cards/{item['tech_card_id']}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Edit Recipe Item #{recipe_item_id}", "action": f"/recipe-items/{recipe_item_id}/edit", "fields": recipe_item_fields(materials, form_data), "back_url": f"/tech-cards/{item['tech_card_id']}", "submit_label": "Save Changes", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": f"Редактировать ингредиент #{recipe_item_id}", "action": f"/recipe-items/{recipe_item_id}/edit", "fields": recipe_item_fields(materials, form_data), "back_url": f"/tech-cards/{item['tech_card_id']}", "submit_label": "Сохранить изменения", "error_message": str(exc)}, status_code=400)

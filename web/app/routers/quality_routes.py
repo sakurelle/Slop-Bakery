@@ -14,50 +14,50 @@ def quality_fields(delivery_items, production_batches, inspectors, results, data
     return [
         {
             "name": "check_type",
-            "label": "Check Type",
+            "label": "Тип проверки",
             "type": "select",
             "required": True,
             "value": data.get("check_type", "raw_material"),
             "options": [
-                {"value": "raw_material", "label": "Raw Material"},
-                {"value": "finished_product", "label": "Finished Product"},
+                {"value": "raw_material", "label": "Сырьё"},
+                {"value": "finished_product", "label": "Готовая продукция"},
             ],
         },
         {
             "name": "delivery_item_id",
-            "label": "Delivery Item",
+            "label": "Позиция поставки",
             "type": "select",
             "value": data.get("delivery_item_id", ""),
-            "options": build_options(delivery_items, "delivery_item_id", "display_name", blank_label="Not selected"),
+            "options": build_options(delivery_items, "delivery_item_id", "display_name", blank_label="Не выбрано"),
         },
         {
             "name": "production_batch_id",
-            "label": "Production Batch",
+            "label": "Производственная партия",
             "type": "select",
             "value": data.get("production_batch_id", ""),
-            "options": build_options(production_batches, "production_batch_id", "display_name", blank_label="Not selected"),
+            "options": build_options(production_batches, "production_batch_id", "display_name", blank_label="Не выбрано"),
         },
-        {"name": "checked_at", "label": "Checked At", "type": "datetime-local", "required": True, "value": data.get("checked_at", "")},
+        {"name": "checked_at", "label": "Дата проверки", "type": "datetime-local", "required": True, "value": data.get("checked_at", "")},
         {
             "name": "inspector_user_id",
-            "label": "Inspector",
+            "label": "Инспектор",
             "type": "select",
             "value": data.get("inspector_user_id", ""),
-            "options": build_options(inspectors, "user_id", "full_name", blank_label="Select inspector"),
+            "options": build_options(inspectors, "user_id", "full_name", blank_label="Выберите инспектора"),
         },
         {
             "name": "result_code",
-            "label": "Result",
+            "label": "Результат",
             "type": "select",
             "required": True,
             "value": data.get("result_code", "passed"),
             "options": build_options(results, "status_code", "name"),
         },
-        {"name": "parameter_name", "label": "Parameter", "type": "text", "value": data.get("parameter_name", "")},
-        {"name": "measured_value", "label": "Measured Value", "type": "text", "value": data.get("measured_value", "")},
-        {"name": "standard_value", "label": "Standard Value", "type": "text", "value": data.get("standard_value", "")},
-        {"name": "document_number", "label": "Document Number", "type": "text", "value": data.get("document_number", "")},
-        {"name": "note", "label": "Note", "type": "textarea", "value": data.get("note", "")},
+        {"name": "parameter_name", "label": "Параметр", "type": "text", "value": data.get("parameter_name", "")},
+        {"name": "measured_value", "label": "Измеренное значение", "type": "text", "value": data.get("measured_value", "")},
+        {"name": "standard_value", "label": "Норма", "type": "text", "value": data.get("standard_value", "")},
+        {"name": "document_number", "label": "Номер документа", "type": "text", "value": data.get("document_number", "")},
+        {"name": "note", "label": "Примечание", "type": "textarea", "value": data.get("note", "")},
     ]
 
 
@@ -100,43 +100,43 @@ def quality_list(
         request,
         "table_list.html",
         {
-            "title": "Quality Checks",
-            "subtitle": "Raw material and finished product quality control journal.",
+            "title": "Контроль качества",
+            "subtitle": "Журнал контроля качества сырья и готовой продукции.",
             "headers": [
                 ("quality_check_id", "ID"),
-                ("check_type", "Type"),
-                ("object_name", "Object"),
-                ("checked_at", "Checked At"),
-                ("result_code", "Result"),
-                ("document_number", "Document"),
+                ("check_type", "Тип"),
+                ("object_name", "Объект"),
+                ("checked_at", "Дата проверки"),
+                ("result_code", "Результат"),
+                ("document_number", "Документ"),
             ],
             "rows": rows,
             "create_url": "/quality/new",
-            "create_label": "Add Quality Check",
+            "create_label": "Добавить проверку",
             "filters": {
                 "action": "/quality",
                 "fields": [
                     {
                         "name": "check_type",
-                        "label": "Check Type",
+                        "label": "Тип проверки",
                         "type": "select",
                         "value": check_type or "",
                         "options": [
-                            {"value": "", "label": "All types"},
-                            {"value": "raw_material", "label": "Raw Material"},
-                            {"value": "finished_product", "label": "Finished Product"},
+                            {"value": "", "label": "Все типы"},
+                            {"value": "raw_material", "label": "Сырьё"},
+                            {"value": "finished_product", "label": "Готовая продукция"},
                         ],
                     },
                     {
                         "name": "result_code",
-                        "label": "Result",
+                        "label": "Результат",
                         "type": "select",
                         "value": result_code or "",
                         "options": [
-                            {"value": "", "label": "All results"},
-                            {"value": "passed", "label": "Passed"},
-                            {"value": "failed", "label": "Failed"},
-                            {"value": "conditional", "label": "Conditional"},
+                            {"value": "", "label": "Все результаты"},
+                            {"value": "passed", "label": "Соответствует"},
+                            {"value": "failed", "label": "Не соответствует"},
+                            {"value": "conditional", "label": "Условно"},
                         ],
                     },
                 ],
@@ -153,7 +153,7 @@ def quality_new_page(request: Request):
         return user
     delivery_items = fetch_all(
         """
-        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'no batch') AS display_name
+        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'без партии') AS display_name
         FROM delivery_items AS di
         JOIN raw_materials AS rm ON rm.material_id = di.material_id
         ORDER BY di.delivery_item_id DESC
@@ -169,7 +169,7 @@ def quality_new_page(request: Request):
     )
     inspectors = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
     results = fetch_all("SELECT status_code, name FROM quality_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": "Add Quality Check", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results), "back_url": "/quality", "submit_label": "Create Quality Check"})
+    return render_template(request, "form.html", {"title": "Добавить проверку качества", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results), "back_url": "/quality", "submit_label": "Создать запись"})
 
 
 @router.post("/quality/new")
@@ -192,7 +192,7 @@ def quality_new(
         return user
     delivery_items = fetch_all(
         """
-        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'no batch') AS display_name
+        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'без партии') AS display_name
         FROM delivery_items AS di
         JOIN raw_materials AS rm ON rm.material_id = di.material_id
         ORDER BY di.delivery_item_id DESC
@@ -225,10 +225,10 @@ def quality_new(
                     (
                         quality_check_id,
                         clean_text(check_type),
-                        parse_int(delivery_item_id, "Delivery Item", allow_none=True),
-                        parse_int(production_batch_id, "Production Batch", allow_none=True),
-                        parse_datetime_local(checked_at, "Checked At"),
-                        parse_int(inspector_user_id, "Inspector", allow_none=True),
+                        parse_int(delivery_item_id, "Позиция поставки", allow_none=True),
+                        parse_int(production_batch_id, "Производственная партия", allow_none=True),
+                        parse_datetime_local(checked_at, "Дата проверки"),
+                        parse_int(inspector_user_id, "Инспектор", allow_none=True),
                         clean_text(result_code),
                         clean_text(parameter_name),
                         clean_text(measured_value),
@@ -237,7 +237,7 @@ def quality_new(
                         clean_text(note),
                     ),
                 )
-        set_flash(request, "Quality check created successfully.")
+        set_flash(request, "Проверка качества успешно добавлена.")
         return redirect_to("/quality")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Add Quality Check", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results, form_data), "back_url": "/quality", "submit_label": "Create Quality Check", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": "Добавить проверку качества", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results, form_data), "back_url": "/quality", "submit_label": "Создать запись", "error_message": str(exc)}, status_code=400)

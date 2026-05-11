@@ -4,7 +4,8 @@
 
 1. Скопировать `configuration/.env.example` в `configuration/.env`.
 2. При необходимости изменить `POSTGRES_*`, `WEB_PORT` и `APP_SECRET_KEY`.
-3. Выполнить:
+3. Если порт `5432` на Windows занят, указать в `.env` другой внешний порт, например `POSTGRES_PORT=15432`.
+4. Выполнить:
 
 ```bash
 docker compose --env-file configuration/.env -f configuration/docker-compose.yml up --build
@@ -155,7 +156,7 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 1. Открыть `/reports`.
 2. Задать период.
 3. Проверить блоки:
-   сырьё на складе;
+   остатки сырья;
    сырьё ниже минимального остатка;
    остатки готовой продукции;
    заказы за период;

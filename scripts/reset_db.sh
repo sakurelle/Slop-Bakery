@@ -17,10 +17,20 @@ set +a
 
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d db
 
-docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T db \
-  psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
-  -f /workspace/database/initialization/99_run_all.sql
+for _ in {1..30}; do
+  if docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T db \
+    pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+    break
+  fi
+
+  sleep 2
+done
+
+if ! docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T db \
+  pg_isready -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" >/dev/null 2>&1; then
+  echo "PostgreSQL did not become ready in time."
+  exit 1
+fi
 
 docker compose --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T db \
-  psql -v ON_ERROR_STOP=1 -U "${POSTGRES_USER}" -d "${POSTGRES_DB}" \
-  -f /workspace/database/checks/07_test_queries.sql
+  sh -lc "cd /workspace/database/initialization && psql -v ON_ERROR_STOP=1 -U \"${POSTGRES_USER}\" -d \"${POSTGRES_DB}\" -f 99_run_all.sql"

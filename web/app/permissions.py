@@ -1,5 +1,13 @@
 ROLE_PRIORITY = ["admin", "technologist", "warehouse_worker", "quality_control", "client"]
 
+ROLE_LABELS = {
+    "admin": "Администратор",
+    "technologist": "Технолог",
+    "warehouse_worker": "Складской работник",
+    "quality_control": "Сотрудник ОТК",
+    "client": "Клиент",
+}
+
 SECTION_RULES = {
     "dashboard": {"admin", "technologist", "warehouse_worker", "quality_control", "client"},
     "customers": {"admin"},
@@ -21,23 +29,23 @@ SECTION_RULES = {
 }
 
 NAV_ITEMS = [
-    {"section": "dashboard", "label": "Dashboard", "path": "/"},
-    {"section": "customers", "label": "Customers", "path": "/customers"},
-    {"section": "suppliers", "label": "Suppliers", "path": "/suppliers"},
-    {"section": "materials", "label": "Materials", "path": "/materials"},
-    {"section": "deliveries", "label": "Deliveries", "path": "/deliveries"},
-    {"section": "material_stock", "label": "Material Stock", "path": "/material-stock"},
-    {"section": "products", "label": "Products", "path": "/products"},
-    {"section": "tech_cards", "label": "Tech Cards", "path": "/tech-cards"},
-    {"section": "orders", "label": "Orders", "path": "/orders"},
-    {"section": "production", "label": "Production", "path": "/production"},
-    {"section": "finished_stock", "label": "Finished Stock", "path": "/finished-stock"},
-    {"section": "quality", "label": "Quality", "path": "/quality"},
-    {"section": "invoices", "label": "Invoices", "path": "/invoices"},
-    {"section": "shipments", "label": "Shipments", "path": "/shipments"},
-    {"section": "reports", "label": "Reports", "path": "/reports"},
-    {"section": "audit", "label": "Audit", "path": "/audit"},
-    {"section": "users_roles", "label": "Users & Roles", "path": "/admin/users"},
+    {"section": "dashboard", "label": "Главная", "path": "/"},
+    {"section": "customers", "label": "Клиенты", "path": "/customers"},
+    {"section": "suppliers", "label": "Поставщики", "path": "/suppliers"},
+    {"section": "materials", "label": "Сырьё", "path": "/materials"},
+    {"section": "deliveries", "label": "Поставки", "path": "/deliveries"},
+    {"section": "material_stock", "label": "Остатки сырья", "path": "/material-stock"},
+    {"section": "products", "label": "Продукция", "path": "/products"},
+    {"section": "tech_cards", "label": "Техкарты", "path": "/tech-cards"},
+    {"section": "orders", "label": "Заказы", "path": "/orders"},
+    {"section": "production", "label": "Производство", "path": "/production"},
+    {"section": "finished_stock", "label": "Готовая продукция", "path": "/finished-stock"},
+    {"section": "quality", "label": "Качество", "path": "/quality"},
+    {"section": "invoices", "label": "Счета", "path": "/invoices"},
+    {"section": "shipments", "label": "Отгрузки", "path": "/shipments"},
+    {"section": "reports", "label": "Отчёты", "path": "/reports"},
+    {"section": "audit", "label": "Аудит", "path": "/audit"},
+    {"section": "users_roles", "label": "Пользователи и роли", "path": "/admin/users"},
 ]
 
 
@@ -53,6 +61,12 @@ def get_primary_role(user: dict | None) -> str | None:
         if role_code in roles:
             return role_code
     return None
+
+
+def get_role_label(role_code: str | None) -> str:
+    if not role_code:
+        return "Без роли"
+    return ROLE_LABELS.get(role_code, role_code)
 
 
 def can_access(user: dict | None, section: str) -> bool:

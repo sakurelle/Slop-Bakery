@@ -101,7 +101,7 @@
 - журналирование старых и новых значений в `JSONB`;
 - SQL-роли PostgreSQL `bakery_admin`, `bakery_technologist`, `bakery_warehouse`, `bakery_quality`, `bakery_client`;
 - разграничение доступа через `GRANT`;
-- установка контекста пользователя из веб-интерфейса в переменные `app.current_user_id` и `app.current_user_ip` для БД-аудита.
+- установка контекста пользователя из веб-интерфейса в `app.current_user_id` и `app.current_user_ip` для БД-аудита.
 
 ## Веб-интерфейс
 
@@ -147,12 +147,12 @@
 7. `database/seed/06_seed.sql`
 8. `database/checks/07_test_queries.sql`
 
-Для удобства есть общий сценарий `database/initialization/99_run_all.sql`.
+Для удобства есть общий сценарий `database/initialization/99_run_all.sql`. Он подключает остальные SQL-файлы относительными путями, поэтому скрипты пересоздания БД запускают его из каталога `database/initialization`.
 
 ## Запуск через Docker
 
 1. Скопировать `configuration/.env.example` в `configuration/.env`.
-2. При необходимости изменить значения подключения и `APP_SECRET_KEY`.
+2. При необходимости изменить значения подключения, `APP_SECRET_KEY`, `WEB_PORT` и внешний порт PostgreSQL `POSTGRES_PORT`.
 3. Поднять сервисы:
 
 ```bash
@@ -162,7 +162,42 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 После запуска:
 
 - PostgreSQL доступен в Docker как сервис `db`;
-- веб-интерфейс доступен на `http://localhost:8000`.
+- веб-интерфейс доступен на `http://localhost:8000`;
+- веб-контейнер подключается к БД по адресу `db:5432`;
+- внешний порт БД на хосте берётся из `POSTGRES_PORT`.
+
+## Windows Launch
+
+Для локального запуска на Windows:
+
+1. Установить Docker Desktop.
+2. Открыть PowerShell в корне проекта.
+3. При необходимости разрешить выполнение скриптов на текущую сессию:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+4. Создать `configuration/.env` на основе `configuration/.env.example`.
+5. Если порт `5432` занят, указать в `configuration/.env`, например:
+
+```env
+POSTGRES_PORT=15432
+```
+
+Это изменит только внешний порт на Windows-хосте. Внутри Docker база всё равно работает на `5432`, а веб-приложение подключается к `db:5432`.
+
+6. Запустить проект:
+
+```powershell
+docker compose --env-file configuration/.env -f configuration/docker-compose.yml up --build
+```
+
+или
+
+```powershell
+.\scripts\start_web.ps1
+```
 
 ## Пересоздание БД
 
@@ -178,17 +213,11 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 .\scripts\reset_db.ps1
 ```
 
-Для запуска только веб-интерфейса:
+Скрипты:
 
-```bash
-./scripts/start_web.sh
-```
-
-или
-
-```powershell
-.\scripts\start_web.ps1
-```
+- поднимают контейнер `db`;
+- ждут готовности PostgreSQL;
+- запускают `99_run_all.sql` из каталога `database/initialization`.
 
 ## Тестовые данные
 
@@ -205,6 +234,8 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 - записи контроля качества;
 - пользователи, роли и связи пользователей с ролями;
 - записи аудита, созданные триггерами и функцией логирования входа/выхода.
+
+Операционные даты в seed-данных заданы относительно `CURRENT_DATE` и `CURRENT_TIMESTAMP`, чтобы демо-остатки и сроки годности оставались актуальными при повторных запусках.
 
 ## Дополнительная документация
 

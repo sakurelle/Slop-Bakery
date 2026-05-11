@@ -12,12 +12,12 @@ router = APIRouter()
 def supplier_fields(data=None):
     data = data or {}
     return [
-        {"name": "company_name", "label": "Company Name", "type": "text", "required": True, "value": data.get("company_name", "")},
-        {"name": "contact_person", "label": "Contact Person", "type": "text", "value": data.get("contact_person", "")},
-        {"name": "phone", "label": "Phone", "type": "text", "required": True, "value": data.get("phone", "")},
+        {"name": "company_name", "label": "Название компании", "type": "text", "required": True, "value": data.get("company_name", "")},
+        {"name": "contact_person", "label": "Контактное лицо", "type": "text", "value": data.get("contact_person", "")},
+        {"name": "phone", "label": "Телефон", "type": "text", "required": True, "value": data.get("phone", "")},
         {"name": "email", "label": "Email", "type": "email", "value": data.get("email", "")},
-        {"name": "address", "label": "Address", "type": "textarea", "value": data.get("address", "")},
-        {"name": "is_active", "label": "Active", "type": "checkbox", "value": bool(data.get("is_active", True))},
+        {"name": "address", "label": "Адрес", "type": "textarea", "value": data.get("address", "")},
+        {"name": "is_active", "label": "Активен", "type": "checkbox", "value": bool(data.get("is_active", True))},
     ]
 
 
@@ -33,19 +33,19 @@ def suppliers_list(request: Request):
         request,
         "table_list.html",
         {
-            "title": "Suppliers",
-            "subtitle": "Suppliers and their contact details.",
+            "title": "Поставщики",
+            "subtitle": "Поставщики и их контактные данные.",
             "headers": [
                 ("supplier_id", "ID"),
-                ("company_name", "Company"),
-                ("contact_person", "Contact"),
-                ("phone", "Phone"),
+                ("company_name", "Компания"),
+                ("contact_person", "Контакт"),
+                ("phone", "Телефон"),
                 ("email", "Email"),
-                ("is_active", "Active"),
+                ("is_active", "Активен"),
             ],
             "rows": rows,
             "create_url": "/suppliers/new",
-            "create_label": "Add Supplier",
+            "create_label": "Добавить поставщика",
         },
     )
 
@@ -59,11 +59,11 @@ def supplier_new_page(request: Request):
         request,
         "form.html",
         {
-            "title": "Add Supplier",
+            "title": "Добавить поставщика",
             "action": "/suppliers/new",
             "fields": supplier_fields(),
             "back_url": "/suppliers",
-            "submit_label": "Create Supplier",
+            "submit_label": "Создать поставщика",
         },
     )
 
@@ -110,18 +110,18 @@ def supplier_new(
                         parse_bool(is_active),
                     ),
                 )
-        set_flash(request, "Supplier created successfully.")
+        set_flash(request, "Поставщик успешно создан.")
         return redirect_to("/suppliers")
     except (PsycopgError, ValueError) as exc:
         return render_template(
             request,
             "form.html",
             {
-                "title": "Add Supplier",
+                "title": "Добавить поставщика",
                 "action": "/suppliers/new",
                 "fields": supplier_fields(form_data),
                 "back_url": "/suppliers",
-                "submit_label": "Create Supplier",
+                "submit_label": "Создать поставщика",
                 "error_message": str(exc),
             },
             status_code=400,
@@ -135,7 +135,7 @@ def supplier_detail(request: Request, supplier_id: int):
         return user
     supplier = fetch_one("SELECT * FROM suppliers WHERE supplier_id = %s", (supplier_id,))
     if not supplier:
-        return render_template(request, "error.html", {"title": "Supplier not found", "message": "Supplier record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Поставщик не найден", "message": "Карточка поставщика не найдена."}, status_code=404)
     materials = fetch_all(
         """
         SELECT rm.name, sm.purchase_price, sm.lead_time_days, sm.is_active
@@ -155,20 +155,20 @@ def supplier_detail(request: Request, supplier_id: int):
             "edit_url": f"/suppliers/{supplier_id}/edit",
             "details": [
                 ("ID", supplier["supplier_id"]),
-                ("Company", supplier["company_name"]),
-                ("Contact Person", supplier["contact_person"]),
-                ("Phone", supplier["phone"]),
+                ("Компания", supplier["company_name"]),
+                ("Контактное лицо", supplier["contact_person"]),
+                ("Телефон", supplier["phone"]),
                 ("Email", supplier["email"]),
-                ("Address", supplier["address"]),
-                ("Created At", supplier["created_at"]),
-                ("Active", supplier["is_active"]),
+                ("Адрес", supplier["address"]),
+                ("Создан", supplier["created_at"]),
+                ("Активен", supplier["is_active"]),
             ],
             "sections": [
                 {
-                    "title": "Supplied Materials",
-                    "headers": [("name", "Material"), ("purchase_price", "Price"), ("lead_time_days", "Lead Time"), ("is_active", "Active")],
+                    "title": "Поставляемое сырьё",
+                    "headers": [("name", "Сырьё"), ("purchase_price", "Цена"), ("lead_time_days", "Срок поставки"), ("is_active", "Активно")],
                     "rows": materials,
-                    "empty_message": "No supplied materials linked to this supplier.",
+                    "empty_message": "Для этого поставщика сырьё не задано.",
                 }
             ],
         },
@@ -182,16 +182,16 @@ def supplier_edit_page(request: Request, supplier_id: int):
         return user
     supplier = fetch_one("SELECT * FROM suppliers WHERE supplier_id = %s", (supplier_id,))
     if not supplier:
-        return render_template(request, "error.html", {"title": "Supplier not found", "message": "Supplier record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Поставщик не найден", "message": "Карточка поставщика не найдена."}, status_code=404)
     return render_template(
         request,
         "form.html",
         {
-            "title": f"Edit Supplier #{supplier_id}",
+            "title": f"Редактировать поставщика #{supplier_id}",
             "action": f"/suppliers/{supplier_id}/edit",
             "fields": supplier_fields(supplier),
             "back_url": f"/suppliers/{supplier_id}",
-            "submit_label": "Save Changes",
+            "submit_label": "Сохранить изменения",
         },
     )
 
@@ -242,18 +242,18 @@ def supplier_edit(
                         supplier_id,
                     ),
                 )
-        set_flash(request, "Supplier updated successfully.")
+        set_flash(request, "Данные поставщика успешно обновлены.")
         return redirect_to(f"/suppliers/{supplier_id}")
     except (PsycopgError, ValueError) as exc:
         return render_template(
             request,
             "form.html",
             {
-                "title": f"Edit Supplier #{supplier_id}",
+                "title": f"Редактировать поставщика #{supplier_id}",
                 "action": f"/suppliers/{supplier_id}/edit",
                 "fields": supplier_fields(form_data),
                 "back_url": f"/suppliers/{supplier_id}",
-                "submit_label": "Save Changes",
+                "submit_label": "Сохранить изменения",
                 "error_message": str(exc),
             },
             status_code=400,

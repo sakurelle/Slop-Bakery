@@ -14,12 +14,12 @@ router = APIRouter()
 def material_fields(data=None):
     data = data or {}
     return [
-        {"name": "name", "label": "Material Name", "type": "text", "required": True, "value": data.get("name", "")},
-        {"name": "unit", "label": "Unit", "type": "text", "required": True, "value": data.get("unit", "kg")},
-        {"name": "min_stock_qty", "label": "Min Stock Quantity", "type": "number", "required": True, "step": "0.001", "min": "0", "value": data.get("min_stock_qty", "0")},
-        {"name": "shelf_life_days", "label": "Shelf Life (days)", "type": "number", "min": "1", "value": data.get("shelf_life_days", "")},
-        {"name": "storage_conditions", "label": "Storage Conditions", "type": "textarea", "value": data.get("storage_conditions", "")},
-        {"name": "is_active", "label": "Active", "type": "checkbox", "value": bool(data.get("is_active", True))},
+        {"name": "name", "label": "Наименование сырья", "type": "text", "required": True, "value": data.get("name", "")},
+        {"name": "unit", "label": "Единица измерения", "type": "text", "required": True, "value": data.get("unit", "kg")},
+        {"name": "min_stock_qty", "label": "Минимальный остаток", "type": "number", "required": True, "step": "0.001", "min": "0", "value": data.get("min_stock_qty", "0")},
+        {"name": "shelf_life_days", "label": "Срок годности (дней)", "type": "number", "min": "1", "value": data.get("shelf_life_days", "")},
+        {"name": "storage_conditions", "label": "Условия хранения", "type": "textarea", "value": data.get("storage_conditions", "")},
+        {"name": "is_active", "label": "Активно", "type": "checkbox", "value": bool(data.get("is_active", True))},
     ]
 
 
@@ -28,24 +28,24 @@ def delivery_fields(suppliers, statuses, data=None):
     return [
         {
             "name": "supplier_id",
-            "label": "Supplier",
+            "label": "Поставщик",
             "type": "select",
             "required": True,
             "value": data.get("supplier_id", ""),
             "options": build_options(suppliers, "supplier_id", "company_name"),
         },
-        {"name": "delivery_date", "label": "Delivery Date", "type": "date", "required": True, "value": data.get("delivery_date", date.today().isoformat())},
+        {"name": "delivery_date", "label": "Дата поставки", "type": "date", "required": True, "value": data.get("delivery_date", date.today().isoformat())},
         {
             "name": "status_code",
-            "label": "Status",
+            "label": "Статус",
             "type": "select",
             "required": True,
             "value": data.get("status_code", "planned"),
             "options": build_options(statuses, "status_code", "name"),
         },
-        {"name": "document_ref", "label": "Document Reference", "type": "text", "value": data.get("document_ref", "")},
-        {"name": "total_amount", "label": "Total Amount", "type": "number", "step": "0.01", "min": "0", "value": data.get("total_amount", "0")},
-        {"name": "note", "label": "Note", "type": "textarea", "value": data.get("note", "")},
+        {"name": "document_ref", "label": "Документ", "type": "text", "value": data.get("document_ref", "")},
+        {"name": "total_amount", "label": "Общая сумма", "type": "number", "step": "0.01", "min": "0", "value": data.get("total_amount", "0")},
+        {"name": "note", "label": "Примечание", "type": "textarea", "value": data.get("note", "")},
     ]
 
 
@@ -54,16 +54,16 @@ def delivery_item_fields(materials, data=None):
     return [
         {
             "name": "material_id",
-            "label": "Material",
+            "label": "Сырьё",
             "type": "select",
             "required": True,
             "value": data.get("material_id", ""),
             "options": build_options(materials, "material_id", "name"),
         },
-        {"name": "quantity", "label": "Quantity", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
-        {"name": "unit_price", "label": "Unit Price", "type": "number", "required": True, "step": "0.01", "min": "0", "value": data.get("unit_price", "")},
-        {"name": "batch_number", "label": "Batch Number", "type": "text", "value": data.get("batch_number", "")},
-        {"name": "expiry_date", "label": "Expiry Date", "type": "date", "required": True, "value": data.get("expiry_date", "")},
+        {"name": "quantity", "label": "Количество", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
+        {"name": "unit_price", "label": "Цена за единицу", "type": "number", "required": True, "step": "0.01", "min": "0", "value": data.get("unit_price", "")},
+        {"name": "batch_number", "label": "Номер партии", "type": "text", "value": data.get("batch_number", "")},
+        {"name": "expiry_date", "label": "Срок годности", "type": "date", "required": True, "value": data.get("expiry_date", "")},
     ]
 
 
@@ -93,22 +93,22 @@ def materials_list(request: Request):
         if row["quantity_on_hand"] < row["min_stock_qty"]:
             row["_row_class"] = "table-danger"
     context = {
-        "title": "Raw Materials",
-        "subtitle": "Materials catalogue with stock visibility.",
+        "title": "Сырьё",
+        "subtitle": "Справочник сырья с отображением текущих остатков.",
         "headers": [
             ("material_id", "ID"),
-            ("name", "Material"),
-            ("unit", "Unit"),
-            ("min_stock_qty", "Min Stock"),
-            ("quantity_on_hand", "Current Stock"),
-            ("shelf_life_days", "Shelf Life"),
-            ("is_active", "Active"),
+            ("name", "Сырьё"),
+            ("unit", "Ед."),
+            ("min_stock_qty", "Мин. остаток"),
+            ("quantity_on_hand", "Текущий остаток"),
+            ("shelf_life_days", "Срок годности"),
+            ("is_active", "Активно"),
         ],
         "rows": rows,
     }
     if "client" not in user.get("roles", []):
         context["create_url"] = "/materials/new"
-        context["create_label"] = "Add Material"
+        context["create_label"] = "Добавить сырьё"
     return render_template(request, "table_list.html", context)
 
 
@@ -118,8 +118,8 @@ def material_new_page(request: Request):
     if not isinstance(user, dict):
         return user
     if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Access denied", "message": "Clients cannot manage materials."}, status_code=403)
-    return render_template(request, "form.html", {"title": "Add Material", "action": "/materials/new", "fields": material_fields(), "back_url": "/materials", "submit_label": "Create Material"})
+        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты не могут управлять сырьём."}, status_code=403)
+    return render_template(request, "form.html", {"title": "Добавить сырьё", "action": "/materials/new", "fields": material_fields(), "back_url": "/materials", "submit_label": "Создать запись"})
 
 
 @router.post("/materials/new")
@@ -151,16 +151,16 @@ def material_new(
                         material_id,
                         clean_text(name),
                         clean_text(unit),
-                        parse_decimal(min_stock_qty, "Min Stock Quantity"),
-                        parse_int(shelf_life_days, "Shelf Life", allow_none=True),
+                        parse_decimal(min_stock_qty, "Минимальный остаток"),
+                        parse_int(shelf_life_days, "Срок годности", allow_none=True),
                         clean_text(storage_conditions),
                         parse_bool(is_active),
                     ),
                 )
-        set_flash(request, "Material created successfully.")
+        set_flash(request, "Сырьё успешно добавлено.")
         return redirect_to("/materials")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Add Material", "action": "/materials/new", "fields": material_fields(form_data), "back_url": "/materials", "submit_label": "Create Material", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": "Добавить сырьё", "action": "/materials/new", "fields": material_fields(form_data), "back_url": "/materials", "submit_label": "Создать запись", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/materials/{material_id}")
@@ -170,7 +170,7 @@ def material_detail(request: Request, material_id: int):
         return user
     material = fetch_one("SELECT * FROM raw_materials WHERE material_id = %s", (material_id,))
     if not material:
-        return render_template(request, "error.html", {"title": "Material not found", "message": "Material record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Сырьё не найдено", "message": "Карточка сырья не найдена."}, status_code=404)
     stock_rows = fetch_all(
         """
         SELECT batch_number, quantity_current, expiry_date, updated_at
@@ -189,18 +189,18 @@ def material_detail(request: Request, material_id: int):
             "edit_url": f"/materials/{material_id}/edit",
             "details": [
                 ("ID", material["material_id"]),
-                ("Unit", material["unit"]),
-                ("Min Stock Quantity", material["min_stock_qty"]),
-                ("Shelf Life Days", material["shelf_life_days"]),
-                ("Storage Conditions", material["storage_conditions"]),
-                ("Active", material["is_active"]),
+                ("Единица измерения", material["unit"]),
+                ("Минимальный остаток", material["min_stock_qty"]),
+                ("Срок годности, дней", material["shelf_life_days"]),
+                ("Условия хранения", material["storage_conditions"]),
+                ("Активно", material["is_active"]),
             ],
             "sections": [
                 {
-                    "title": "Stock Batches",
-                    "headers": [("batch_number", "Batch"), ("quantity_current", "Quantity"), ("expiry_date", "Expiry"), ("updated_at", "Updated At")],
+                    "title": "Партии на складе",
+                    "headers": [("batch_number", "Партия"), ("quantity_current", "Количество"), ("expiry_date", "Срок годности"), ("updated_at", "Обновлено")],
                     "rows": stock_rows,
-                    "empty_message": "No stock batches linked to this material.",
+                    "empty_message": "Для этого сырья складских партий нет.",
                 }
             ],
         },
@@ -214,8 +214,8 @@ def material_edit_page(request: Request, material_id: int):
         return user
     material = fetch_one("SELECT * FROM raw_materials WHERE material_id = %s", (material_id,))
     if not material:
-        return render_template(request, "error.html", {"title": "Material not found", "message": "Material record not found."}, status_code=404)
-    return render_template(request, "form.html", {"title": f"Edit Material #{material_id}", "action": f"/materials/{material_id}/edit", "fields": material_fields(material), "back_url": f"/materials/{material_id}", "submit_label": "Save Changes"})
+        return render_template(request, "error.html", {"title": "Сырьё не найдено", "message": "Карточка сырья не найдена."}, status_code=404)
+    return render_template(request, "form.html", {"title": f"Редактировать сырьё #{material_id}", "action": f"/materials/{material_id}/edit", "fields": material_fields(material), "back_url": f"/materials/{material_id}", "submit_label": "Сохранить изменения"})
 
 
 @router.post("/materials/{material_id}/edit")
@@ -250,17 +250,17 @@ def material_edit(
                     (
                         clean_text(name),
                         clean_text(unit),
-                        parse_decimal(min_stock_qty, "Min Stock Quantity"),
-                        parse_int(shelf_life_days, "Shelf Life", allow_none=True),
+                        parse_decimal(min_stock_qty, "Минимальный остаток"),
+                        parse_int(shelf_life_days, "Срок годности", allow_none=True),
                         clean_text(storage_conditions),
                         parse_bool(is_active),
                         material_id,
                     ),
                 )
-        set_flash(request, "Material updated successfully.")
+        set_flash(request, "Данные по сырью успешно обновлены.")
         return redirect_to(f"/materials/{material_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Edit Material #{material_id}", "action": f"/materials/{material_id}/edit", "fields": material_fields(form_data), "back_url": f"/materials/{material_id}", "submit_label": "Save Changes", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": f"Редактировать сырьё #{material_id}", "action": f"/materials/{material_id}/edit", "fields": material_fields(form_data), "back_url": f"/materials/{material_id}", "submit_label": "Сохранить изменения", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/deliveries")
@@ -288,19 +288,19 @@ def deliveries_list(request: Request):
         request,
         "table_list.html",
         {
-            "title": "Material Deliveries",
-            "subtitle": "Incoming deliveries from suppliers.",
+            "title": "Поставки сырья",
+            "subtitle": "Входящие поставки от поставщиков.",
             "headers": [
                 ("delivery_id", "ID"),
-                ("delivery_number", "Delivery Number"),
-                ("company_name", "Supplier"),
-                ("delivery_date", "Date"),
-                ("status_code", "Status"),
-                ("total_amount", "Total Amount"),
+                ("delivery_number", "Номер поставки"),
+                ("company_name", "Поставщик"),
+                ("delivery_date", "Дата"),
+                ("status_code", "Статус"),
+                ("total_amount", "Сумма"),
             ],
             "rows": rows,
             "create_url": "/deliveries/new",
-            "create_label": "Create Delivery",
+            "create_label": "Создать поставку",
         },
     )
 
@@ -312,7 +312,7 @@ def delivery_new_page(request: Request):
         return user
     suppliers = fetch_all("SELECT supplier_id, company_name FROM suppliers WHERE is_active = TRUE ORDER BY company_name")
     statuses = fetch_all("SELECT status_code, name FROM delivery_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": "Create Delivery", "action": "/deliveries/new", "fields": delivery_fields(suppliers, statuses), "back_url": "/deliveries", "submit_label": "Create Delivery"})
+    return render_template(request, "form.html", {"title": "Создать поставку", "action": "/deliveries/new", "fields": delivery_fields(suppliers, statuses), "back_url": "/deliveries", "submit_label": "Создать поставку"})
 
 
 @router.post("/deliveries/new")
@@ -346,20 +346,20 @@ def delivery_new(
                     """,
                     (
                         delivery_id,
-                        parse_int(supplier_id, "Supplier"),
+                        parse_int(supplier_id, "Поставщик"),
                         delivery_number,
-                        parse_date(delivery_date, "Delivery Date"),
+                        parse_date(delivery_date, "Дата поставки"),
                         clean_text(status_code),
                         user["user_id"],
                         clean_text(document_ref),
-                        parse_decimal(total_amount, "Total Amount"),
+                        parse_decimal(total_amount, "Общая сумма"),
                         clean_text(note),
                     ),
                 )
-        set_flash(request, "Delivery created. Add delivery items on the detail page.")
+        set_flash(request, "Поставка создана. Теперь можно добавить её позиции.")
         return redirect_to(f"/deliveries/{delivery_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": "Create Delivery", "action": "/deliveries/new", "fields": delivery_fields(suppliers, statuses, form_data), "back_url": "/deliveries", "submit_label": "Create Delivery", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": "Создать поставку", "action": "/deliveries/new", "fields": delivery_fields(suppliers, statuses, form_data), "back_url": "/deliveries", "submit_label": "Создать поставку", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/deliveries/{delivery_id}")
@@ -377,7 +377,7 @@ def delivery_detail(request: Request, delivery_id: int):
         (delivery_id,),
     )
     if not delivery:
-        return render_template(request, "error.html", {"title": "Delivery not found", "message": "Delivery record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Поставка не найдена", "message": "Карточка поставки не найдена."}, status_code=404)
     items = fetch_all(
         """
         SELECT di.delivery_item_id, rm.name, di.quantity, di.unit_price, di.batch_number, di.expiry_date
@@ -394,22 +394,22 @@ def delivery_detail(request: Request, delivery_id: int):
         {
             "title": delivery["delivery_number"],
             "back_url": "/deliveries",
-            "extra_actions": [{"label": "Add Delivery Item", "url": f"/deliveries/{delivery_id}/items/new"}],
+            "extra_actions": [{"label": "Добавить позицию", "url": f"/deliveries/{delivery_id}/items/new"}],
             "details": [
                 ("ID", delivery["delivery_id"]),
-                ("Supplier", delivery["company_name"]),
-                ("Delivery Date", delivery["delivery_date"]),
-                ("Status", delivery["status_code"]),
-                ("Document Ref", delivery["document_ref"]),
-                ("Total Amount", delivery["total_amount"]),
-                ("Note", delivery["note"]),
+                ("Поставщик", delivery["company_name"]),
+                ("Дата поставки", delivery["delivery_date"]),
+                ("Статус", delivery["status_code"]),
+                ("Документ", delivery["document_ref"]),
+                ("Общая сумма", delivery["total_amount"]),
+                ("Примечание", delivery["note"]),
             ],
             "sections": [
                 {
-                    "title": "Delivery Items",
-                    "headers": [("delivery_item_id", "ID"), ("name", "Material"), ("quantity", "Quantity"), ("unit_price", "Unit Price"), ("batch_number", "Batch"), ("expiry_date", "Expiry Date")],
+                    "title": "Позиции поставки",
+                    "headers": [("delivery_item_id", "ID"), ("name", "Сырьё"), ("quantity", "Количество"), ("unit_price", "Цена за ед."), ("batch_number", "Партия"), ("expiry_date", "Срок годности")],
                     "rows": items,
-                    "empty_message": "No delivery items added yet.",
+                    "empty_message": "Позиции поставки ещё не добавлены.",
                 }
             ],
         },
@@ -422,7 +422,7 @@ def delivery_item_new_page(request: Request, delivery_id: int):
     if not isinstance(user, dict):
         return user
     materials = fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Add Delivery Item to #{delivery_id}", "action": f"/deliveries/{delivery_id}/items/new", "fields": delivery_item_fields(materials), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Add Delivery Item"})
+    return render_template(request, "form.html", {"title": f"Добавить позицию в поставку #{delivery_id}", "action": f"/deliveries/{delivery_id}/items/new", "fields": delivery_item_fields(materials), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Добавить позицию"})
 
 
 @router.post("/deliveries/{delivery_id}/items/new")
@@ -444,10 +444,10 @@ def delivery_item_new(
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             delivery_item_id = next_id(conn, "delivery_items", "delivery_item_id")
             stock_id = next_id(conn, "raw_material_stock", "stock_id")
-            material_id_value = parse_int(material_id, "Material")
-            quantity_value = parse_decimal(quantity, "Quantity")
-            unit_price_value = parse_decimal(unit_price, "Unit Price")
-            expiry_date_value = parse_date(expiry_date, "Expiry Date")
+            material_id_value = parse_int(material_id, "Сырьё")
+            quantity_value = parse_decimal(quantity, "Количество")
+            unit_price_value = parse_decimal(unit_price, "Цена за единицу")
+            expiry_date_value = parse_date(expiry_date, "Срок годности")
             batch_value = clean_text(batch_number)
             with conn.cursor() as cur:
                 cur.execute(
@@ -480,10 +480,10 @@ def delivery_item_new(
                     """,
                     (delivery_id, delivery_id),
                 )
-        set_flash(request, "Delivery item added successfully.")
+        set_flash(request, "Позиция поставки успешно добавлена.")
         return redirect_to(f"/deliveries/{delivery_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Add Delivery Item to #{delivery_id}", "action": f"/deliveries/{delivery_id}/items/new", "fields": delivery_item_fields(materials, form_data), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Add Delivery Item", "error_message": str(exc)}, status_code=400)
+        return render_template(request, "form.html", {"title": f"Добавить позицию в поставку #{delivery_id}", "action": f"/deliveries/{delivery_id}/items/new", "fields": delivery_item_fields(materials, form_data), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Добавить позицию", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/material-stock")
@@ -518,16 +518,16 @@ def material_stock(request: Request):
         request,
         "table_list.html",
         {
-            "title": "Material Stock",
-            "subtitle": "Warehouse stock by batch. Expired and soon-to-expire batches are highlighted.",
+            "title": "Остатки сырья",
+            "subtitle": "Складские остатки по партиям. Просроченные и скоро истекающие партии подсвечены.",
             "headers": [
                 ("stock_id", "ID"),
-                ("material_name", "Material"),
-                ("batch_number", "Batch"),
-                ("quantity_current", "Quantity"),
-                ("unit", "Unit"),
-                ("expiry_date", "Expiry Date"),
-                ("updated_at", "Updated At"),
+                ("material_name", "Сырьё"),
+                ("batch_number", "Партия"),
+                ("quantity_current", "Количество"),
+                ("unit", "Ед."),
+                ("expiry_date", "Срок годности"),
+                ("updated_at", "Обновлено"),
             ],
             "rows": rows,
         },

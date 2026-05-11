@@ -14,29 +14,29 @@ def customer_form_fields(data=None):
     return [
         {
             "name": "customer_type",
-            "label": "Customer Type",
+            "label": "Тип клиента",
             "type": "select",
             "required": True,
             "value": data.get("customer_type", "individual"),
             "options": [
-                {"value": "individual", "label": "Individual"},
-                {"value": "company", "label": "Company"},
+                {"value": "individual", "label": "Физическое лицо"},
+                {"value": "company", "label": "Компания"},
             ],
         },
-        {"name": "full_name", "label": "Full Name", "type": "text", "value": data.get("full_name", "")},
-        {"name": "company_name", "label": "Company Name", "type": "text", "value": data.get("company_name", "")},
-        {"name": "phone", "label": "Phone", "type": "text", "required": True, "value": data.get("phone", "")},
+        {"name": "full_name", "label": "ФИО", "type": "text", "value": data.get("full_name", "")},
+        {"name": "company_name", "label": "Название компании", "type": "text", "value": data.get("company_name", "")},
+        {"name": "phone", "label": "Телефон", "type": "text", "required": True, "value": data.get("phone", "")},
         {"name": "email", "label": "Email", "type": "email", "value": data.get("email", "")},
         {
             "name": "delivery_address",
-            "label": "Delivery Address",
+            "label": "Адрес доставки",
             "type": "textarea",
             "required": True,
             "value": data.get("delivery_address", ""),
         },
         {
             "name": "is_active",
-            "label": "Active",
+            "label": "Активен",
             "type": "checkbox",
             "value": bool(data.get("is_active", True)),
         },
@@ -68,19 +68,19 @@ def customers_list(request: Request):
         request,
         "table_list.html",
         {
-            "title": "Customers",
-            "subtitle": "Customer registry with activity status.",
+            "title": "Клиенты",
+            "subtitle": "Реестр клиентов с признаком активности.",
             "headers": [
                 ("customer_id", "ID"),
-                ("customer_type", "Type"),
-                ("display_name", "Name"),
-                ("phone", "Phone"),
+                ("customer_type", "Тип"),
+                ("display_name", "Наименование"),
+                ("phone", "Телефон"),
                 ("email", "Email"),
-                ("is_active", "Active"),
+                ("is_active", "Активен"),
             ],
             "rows": rows,
             "create_url": "/customers/new",
-            "create_label": "Add Customer",
+            "create_label": "Добавить клиента",
         },
     )
 
@@ -94,11 +94,11 @@ def customer_create_page(request: Request):
         request,
         "form.html",
         {
-            "title": "Add Customer",
+            "title": "Добавить клиента",
             "action": "/customers/new",
             "fields": customer_form_fields(),
             "back_url": "/customers",
-            "submit_label": "Create Customer",
+            "submit_label": "Создать клиента",
         },
     )
 
@@ -157,18 +157,18 @@ def customer_create(
                         parse_bool(is_active),
                     ),
                 )
-        set_flash(request, "Customer created successfully.")
+        set_flash(request, "Клиент успешно создан.")
         return redirect_to("/customers")
     except (PsycopgError, ValueError) as exc:
         return render_template(
             request,
             "form.html",
             {
-                "title": "Add Customer",
+                "title": "Добавить клиента",
                 "action": "/customers/new",
                 "fields": customer_form_fields(form_data),
                 "back_url": "/customers",
-                "submit_label": "Create Customer",
+                "submit_label": "Создать клиента",
                 "error_message": str(exc),
             },
             status_code=400,
@@ -186,7 +186,7 @@ def customer_detail(request: Request, customer_id: int):
         return render_template(
             request,
             "error.html",
-            {"title": "Customer not found", "message": "The requested customer does not exist."},
+            {"title": "Клиент не найден", "message": "Запрошенный клиент не существует."},
             status_code=404,
         )
 
@@ -203,33 +203,33 @@ def customer_detail(request: Request, customer_id: int):
         request,
         "detail.html",
         {
-            "title": f"Customer #{customer_id}",
+            "title": f"Клиент #{customer_id}",
             "back_url": "/customers",
             "edit_url": f"/customers/{customer_id}/edit",
             "extra_forms": [
                 {
                     "action": f"/customers/{customer_id}/deactivate",
-                    "label": "Deactivate",
+                    "label": "Деактивировать",
                     "class": "btn-outline-danger",
                 }
             ] if customer["is_active"] else [],
             "details": [
                 ("ID", customer["customer_id"]),
-                ("Type", customer["customer_type"]),
-                ("Full Name", customer["full_name"]),
-                ("Company Name", customer["company_name"]),
-                ("Phone", customer["phone"]),
+                ("Тип", customer["customer_type"]),
+                ("ФИО", customer["full_name"]),
+                ("Название компании", customer["company_name"]),
+                ("Телефон", customer["phone"]),
                 ("Email", customer["email"]),
-                ("Delivery Address", customer["delivery_address"]),
-                ("Created At", customer["created_at"]),
-                ("Active", customer["is_active"]),
+                ("Адрес доставки", customer["delivery_address"]),
+                ("Создан", customer["created_at"]),
+                ("Активен", customer["is_active"]),
             ],
             "sections": [
                 {
-                    "title": "Orders",
-                    "headers": [("order_number", "Order"), ("order_date", "Date"), ("status_code", "Status"), ("planned_shipment_date", "Planned Shipment")],
+                    "title": "Заказы",
+                    "headers": [("order_number", "Заказ"), ("order_date", "Дата"), ("status_code", "Статус"), ("planned_shipment_date", "Плановая отгрузка")],
                     "rows": orders,
-                    "empty_message": "No orders linked to this customer.",
+                    "empty_message": "У этого клиента нет заказов.",
                 }
             ],
         },
@@ -243,16 +243,16 @@ def customer_edit_page(request: Request, customer_id: int):
         return user
     customer = fetch_one("SELECT * FROM customers WHERE customer_id = %s", (customer_id,))
     if not customer:
-        return render_template(request, "error.html", {"title": "Customer not found", "message": "Customer record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Клиент не найден", "message": "Карточка клиента не найдена."}, status_code=404)
     return render_template(
         request,
         "form.html",
         {
-            "title": f"Edit Customer #{customer_id}",
+            "title": f"Редактировать клиента #{customer_id}",
             "action": f"/customers/{customer_id}/edit",
             "fields": customer_form_fields(customer),
             "back_url": f"/customers/{customer_id}",
-            "submit_label": "Save Changes",
+            "submit_label": "Сохранить изменения",
         },
     )
 
@@ -310,18 +310,18 @@ def customer_edit(
                         customer_id,
                     ),
                 )
-        set_flash(request, "Customer updated successfully.")
+        set_flash(request, "Данные клиента успешно обновлены.")
         return redirect_to(f"/customers/{customer_id}")
     except (PsycopgError, ValueError) as exc:
         return render_template(
             request,
             "form.html",
             {
-                "title": f"Edit Customer #{customer_id}",
+                "title": f"Редактировать клиента #{customer_id}",
                 "action": f"/customers/{customer_id}/edit",
                 "fields": customer_form_fields(form_data),
                 "back_url": f"/customers/{customer_id}",
-                "submit_label": "Save Changes",
+                "submit_label": "Сохранить изменения",
                 "error_message": str(exc),
             },
             status_code=400,
@@ -336,5 +336,5 @@ def customer_deactivate(request: Request, customer_id: int):
     with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
         with conn.cursor() as cur:
             cur.execute("UPDATE customers SET is_active = FALSE WHERE customer_id = %s", (customer_id,))
-    set_flash(request, "Customer was deactivated.", "warning")
+    set_flash(request, "Клиент деактивирован.", "warning")
     return redirect_to(f"/customers/{customer_id}")

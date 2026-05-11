@@ -6,8 +6,8 @@
         <h1 class="h2 mb-1">{{ title }}</h1>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-        {% if back_url %}<a href="{{ back_url }}" class="btn btn-outline-secondary">Back</a>{% endif %}
-        {% if edit_url %}<a href="{{ edit_url }}" class="btn btn-bakery">Edit</a>{% endif %}
+        {% if back_url %}<a href="{{ back_url }}" class="btn btn-outline-secondary">Назад</a>{% endif %}
+        {% if edit_url %}<a href="{{ edit_url }}" class="btn btn-bakery">Редактировать</a>{% endif %}
         {% for action in extra_actions or [] %}
         <a href="{{ action.url }}" class="btn btn-outline-primary">{{ action.label }}</a>
         {% endfor %}
@@ -25,7 +25,7 @@
             {% for label, value in details %}
             <div class="col-md-6">
                 <div class="detail-label">{{ label }}</div>
-                <div class="detail-value">{{ value }}</div>
+                <div class="detail-value">{{ display_value(label, value) }}</div>
             </div>
             {% endfor %}
         </div>
@@ -44,7 +44,7 @@
                     <th>{{ label }}</th>
                     {% endfor %}
                     {% if has_section_actions %}
-                    <th class="text-end">Actions</th>
+                    <th class="text-end">Действия</th>
                     {% endif %}
                 </tr>
             </thead>
@@ -52,10 +52,10 @@
                 {% for row in section.rows %}
                 <tr>
                     {% for key, _ in section.headers %}
-                    <td>{{ row[key] }}</td>
+                    <td>{{ display_value(key, row[key]) }}</td>
                     {% endfor %}
                     {% if row._detail_url is defined %}
-                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Open</a></td>
+                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Открыть</a></td>
                     {% endif %}
                 </tr>
                 {% else %}

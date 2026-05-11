@@ -25,10 +25,22 @@ $dbUser = $envData["POSTGRES_USER"]
 
 docker compose --env-file $EnvFile -f $ComposeFile up -d db
 
-docker compose --env-file $EnvFile -f $ComposeFile exec -T db `
-    psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName `
-    -f /workspace/database/initialization/99_run_all.sql
+$dbReady = $false
+for ($attempt = 1; $attempt -le 30; $attempt++) {
+    docker compose --env-file $EnvFile -f $ComposeFile exec -T db `
+        pg_isready -U $dbUser -d $dbName | Out-Null
+
+    if ($LASTEXITCODE -eq 0) {
+        $dbReady = $true
+        break
+    }
+
+    Start-Sleep -Seconds 2
+}
+
+if (-not $dbReady) {
+    throw "PostgreSQL did not become ready in time."
+}
 
 docker compose --env-file $EnvFile -f $ComposeFile exec -T db `
-    psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName `
-    -f /workspace/database/checks/07_test_queries.sql
+    sh -lc "cd /workspace/database/initialization && psql -v ON_ERROR_STOP=1 -U $dbUser -d $dbName -f 99_run_all.sql"

@@ -18,11 +18,11 @@ def parse_int(value, field_name: str, allow_none: bool = False) -> int | None:
     if text is None:
         if allow_none:
             return None
-        raise ValueError(f"{field_name} is required.")
+        raise ValueError(f"Поле «{field_name}» обязательно.")
     try:
         return int(text)
     except ValueError as exc:
-        raise ValueError(f"{field_name} must be an integer.") from exc
+        raise ValueError(f"Поле «{field_name}» должно быть целым числом.") from exc
 
 
 def parse_decimal(value, field_name: str, allow_none: bool = False) -> Decimal | None:
@@ -30,11 +30,11 @@ def parse_decimal(value, field_name: str, allow_none: bool = False) -> Decimal |
     if text is None:
         if allow_none:
             return None
-        raise ValueError(f"{field_name} is required.")
+        raise ValueError(f"Поле «{field_name}» обязательно.")
     try:
         return Decimal(text)
     except InvalidOperation as exc:
-        raise ValueError(f"{field_name} must be a decimal number.") from exc
+        raise ValueError(f"Поле «{field_name}» должно быть числом.") from exc
 
 
 def parse_date(value, field_name: str, allow_none: bool = False) -> date | None:
@@ -42,11 +42,11 @@ def parse_date(value, field_name: str, allow_none: bool = False) -> date | None:
     if text is None:
         if allow_none:
             return None
-        raise ValueError(f"{field_name} is required.")
+        raise ValueError(f"Поле «{field_name}» обязательно.")
     try:
         return datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError as exc:
-        raise ValueError(f"{field_name} must be in YYYY-MM-DD format.") from exc
+        raise ValueError(f"Поле «{field_name}» должно быть в формате ГГГГ-ММ-ДД.") from exc
 
 
 def parse_datetime_local(value, field_name: str, allow_none: bool = False) -> datetime | None:
@@ -54,13 +54,13 @@ def parse_datetime_local(value, field_name: str, allow_none: bool = False) -> da
     if text is None:
         if allow_none:
             return None
-        raise ValueError(f"{field_name} is required.")
+        raise ValueError(f"Поле «{field_name}» обязательно.")
     for fmt in ("%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
         try:
             return datetime.strptime(text, fmt)
         except ValueError:
             continue
-    raise ValueError(f"{field_name} must be a valid date and time.")
+    raise ValueError(f"Поле «{field_name}» должно содержать корректные дату и время.")
 
 
 def value_or_dash(value):

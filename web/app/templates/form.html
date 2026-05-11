@@ -9,7 +9,7 @@
                     <h1 class="h4 mb-0">{{ title }}</h1>
                 </div>
                 {% if back_url %}
-                <a href="{{ back_url }}" class="btn btn-sm btn-outline-secondary">Back</a>
+                <a href="{{ back_url }}" class="btn btn-sm btn-outline-secondary">Назад</a>
                 {% endif %}
             </div>
             <div class="card-body">
@@ -34,7 +34,7 @@
                             {% elif field.type == "select" %}
                             <select class="form-select" name="{{ field.name }}" id="{{ field.name }}" {% if field.required %}required{% endif %}>
                                 {% for option in field.options %}
-                                <option value="{{ option.value }}" {% if field.value|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                                <option value="{{ option.value }}" {% if field.value|string == option.value|string %}selected{% endif %}>{{ display_value(field.name, option.label) }}</option>
                                 {% endfor %}
                             </select>
                             {% else %}
@@ -55,9 +55,9 @@
                         {% endif %}
                     {% endfor %}
                     <div class="col-12 d-flex gap-2 pt-2">
-                        <button type="submit" class="btn btn-bakery">{{ submit_label or "Save" }}</button>
+                        <button type="submit" class="btn btn-bakery">{{ submit_label or "Сохранить" }}</button>
                         {% if back_url %}
-                        <a href="{{ back_url }}" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ back_url }}" class="btn btn-outline-secondary">Отмена</a>
                         {% endif %}
                     </div>
                 </form>

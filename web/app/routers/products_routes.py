@@ -12,12 +12,12 @@ router = APIRouter()
 def product_fields(data=None):
     data = data or {}
     return [
-        {"name": "name", "label": "Product Name", "type": "text", "required": True, "value": data.get("name", "")},
-        {"name": "category", "label": "Category", "type": "text", "value": data.get("category", "")},
-        {"name": "unit", "label": "Unit", "type": "text", "required": True, "value": data.get("unit", "piece")},
-        {"name": "price", "label": "Price", "type": "number", "required": True, "step": "0.01", "min": "0", "value": data.get("price", "")},
-        {"name": "shelf_life_days", "label": "Shelf Life (days)", "type": "number", "required": True, "min": "1", "value": data.get("shelf_life_days", "")},
-        {"name": "is_active", "label": "Active", "type": "checkbox", "value": bool(data.get("is_active", True))},
+        {"name": "name", "label": "Наименование продукции", "type": "text", "required": True, "value": data.get("name", "")},
+        {"name": "category", "label": "Категория", "type": "text", "value": data.get("category", "")},
+        {"name": "unit", "label": "Единица измерения", "type": "text", "required": True, "value": data.get("unit", "piece")},
+        {"name": "price", "label": "Цена", "type": "number", "required": True, "step": "0.01", "min": "0", "value": data.get("price", "")},
+        {"name": "shelf_life_days", "label": "Срок годности (дней)", "type": "number", "required": True, "min": "1", "value": data.get("shelf_life_days", "")},
+        {"name": "is_active", "label": "Активна", "type": "checkbox", "value": bool(data.get("is_active", True))},
     ]
 
 
@@ -36,22 +36,22 @@ def products_list(request: Request):
     for row in rows:
         row["_detail_url"] = f"/products/{row['product_id']}"
     context = {
-        "title": "Products",
-        "subtitle": "Finished goods catalogue.",
+        "title": "Продукция",
+        "subtitle": "Справочник готовой продукции.",
         "headers": [
             ("product_id", "ID"),
-            ("name", "Product"),
-            ("category", "Category"),
-            ("unit", "Unit"),
-            ("price", "Price"),
-            ("shelf_life_days", "Shelf Life"),
-            ("is_active", "Active"),
+            ("name", "Продукция"),
+            ("category", "Категория"),
+            ("unit", "Ед."),
+            ("price", "Цена"),
+            ("shelf_life_days", "Срок годности"),
+            ("is_active", "Активна"),
         ],
         "rows": rows,
     }
     if "client" not in user.get("roles", []):
         context["create_url"] = "/products/new"
-        context["create_label"] = "Add Product"
+        context["create_label"] = "Добавить продукцию"
     return render_template(request, "table_list.html", context)
 
 
@@ -61,11 +61,11 @@ def product_new_page(request: Request):
     if not isinstance(user, dict):
         return user
     if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Access denied", "message": "Clients can only view products."}, status_code=403)
+        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
     return render_template(
         request,
         "form.html",
-        {"title": "Add Product", "action": "/products/new", "fields": product_fields(), "back_url": "/products", "submit_label": "Create Product"},
+        {"title": "Добавить продукцию", "action": "/products/new", "fields": product_fields(), "back_url": "/products", "submit_label": "Создать запись"},
     )
 
 
@@ -83,12 +83,12 @@ def product_new(
     if not isinstance(user, dict):
         return user
     if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Access denied", "message": "Clients can only view products."}, status_code=403)
+        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
 
     form_data = {"name": name, "category": category, "unit": unit, "price": price, "shelf_life_days": shelf_life_days, "is_active": parse_bool(is_active)}
     try:
-        product_price = parse_decimal(price, "Price")
-        shelf_life = parse_int(shelf_life_days, "Shelf Life")
+        product_price = parse_decimal(price, "Цена")
+        shelf_life = parse_int(shelf_life_days, "Срок годности")
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             product_id = next_id(conn, "products", "product_id")
             with conn.cursor() as cur:
@@ -99,13 +99,13 @@ def product_new(
                     """,
                     (product_id, clean_text(name), clean_text(category), clean_text(unit), product_price, shelf_life, parse_bool(is_active)),
                 )
-        set_flash(request, "Product created successfully.")
+        set_flash(request, "Продукция успешно добавлена.")
         return redirect_to("/products")
     except (PsycopgError, ValueError) as exc:
         return render_template(
             request,
             "form.html",
-            {"title": "Add Product", "action": "/products/new", "fields": product_fields(form_data), "back_url": "/products", "submit_label": "Create Product", "error_message": str(exc)},
+            {"title": "Добавить продукцию", "action": "/products/new", "fields": product_fields(form_data), "back_url": "/products", "submit_label": "Создать запись", "error_message": str(exc)},
             status_code=400,
         )
 
@@ -117,7 +117,7 @@ def product_detail(request: Request, product_id: int):
         return user
     product = fetch_one("SELECT * FROM products WHERE product_id = %s", (product_id,))
     if not product:
-        return render_template(request, "error.html", {"title": "Product not found", "message": "Product record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Продукция не найдена", "message": "Карточка продукции не найдена."}, status_code=404)
     tech_cards = fetch_all(
         """
         SELECT tech_card_id, card_number, version, status_code, effective_from, effective_to
@@ -136,19 +136,19 @@ def product_detail(request: Request, product_id: int):
             "edit_url": None if "client" in user.get("roles", []) else f"/products/{product_id}/edit",
             "details": [
                 ("ID", product["product_id"]),
-                ("Category", product["category"]),
-                ("Unit", product["unit"]),
-                ("Price", product["price"]),
-                ("Shelf Life Days", product["shelf_life_days"]),
-                ("Created At", product["created_at"]),
-                ("Active", product["is_active"]),
+                ("Категория", product["category"]),
+                ("Единица измерения", product["unit"]),
+                ("Цена", product["price"]),
+                ("Срок годности, дней", product["shelf_life_days"]),
+                ("Создана", product["created_at"]),
+                ("Активна", product["is_active"]),
             ],
             "sections": [
                 {
-                    "title": "Tech Cards",
-                    "headers": [("tech_card_id", "ID"), ("card_number", "Card Number"), ("version", "Version"), ("status_code", "Status"), ("effective_from", "Effective From"), ("effective_to", "Effective To")],
+                    "title": "Технологические карты",
+                    "headers": [("tech_card_id", "ID"), ("card_number", "Номер карты"), ("version", "Версия"), ("status_code", "Статус"), ("effective_from", "Действует с"), ("effective_to", "Действует до")],
                     "rows": tech_cards,
-                    "empty_message": "No tech cards linked to this product.",
+                    "empty_message": "Для этой продукции технологические карты не найдены.",
                 }
             ],
         },
@@ -161,14 +161,14 @@ def product_edit_page(request: Request, product_id: int):
     if not isinstance(user, dict):
         return user
     if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Access denied", "message": "Clients can only view products."}, status_code=403)
+        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
     product = fetch_one("SELECT * FROM products WHERE product_id = %s", (product_id,))
     if not product:
-        return render_template(request, "error.html", {"title": "Product not found", "message": "Product record not found."}, status_code=404)
+        return render_template(request, "error.html", {"title": "Продукция не найдена", "message": "Карточка продукции не найдена."}, status_code=404)
     return render_template(
         request,
         "form.html",
-        {"title": f"Edit Product #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(product), "back_url": f"/products/{product_id}", "submit_label": "Save Changes"},
+        {"title": f"Редактировать продукцию #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(product), "back_url": f"/products/{product_id}", "submit_label": "Сохранить изменения"},
     )
 
 
@@ -187,12 +187,12 @@ def product_edit(
     if not isinstance(user, dict):
         return user
     if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Access denied", "message": "Clients can only view products."}, status_code=403)
+        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
 
     form_data = {"name": name, "category": category, "unit": unit, "price": price, "shelf_life_days": shelf_life_days, "is_active": parse_bool(is_active)}
     try:
-        product_price = parse_decimal(price, "Price")
-        shelf_life = parse_int(shelf_life_days, "Shelf Life")
+        product_price = parse_decimal(price, "Цена")
+        shelf_life = parse_int(shelf_life_days, "Срок годности")
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -208,12 +208,12 @@ def product_edit(
                     """,
                     (clean_text(name), clean_text(category), clean_text(unit), product_price, shelf_life, parse_bool(is_active), product_id),
                 )
-        set_flash(request, "Product updated successfully.")
+        set_flash(request, "Данные продукции успешно обновлены.")
         return redirect_to(f"/products/{product_id}")
     except (PsycopgError, ValueError) as exc:
         return render_template(
             request,
             "form.html",
-            {"title": f"Edit Product #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(form_data), "back_url": f"/products/{product_id}", "submit_label": "Save Changes", "error_message": str(exc)},
+            {"title": f"Редактировать продукцию #{product_id}", "action": f"/products/{product_id}/edit", "fields": product_fields(form_data), "back_url": f"/products/{product_id}", "submit_label": "Сохранить изменения", "error_message": str(exc)},
             status_code=400,
         )
