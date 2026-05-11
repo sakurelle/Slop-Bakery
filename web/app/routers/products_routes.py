@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_section, redirect_to, render_template, set_flash
+from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
 from ..database import fetch_all, fetch_one, get_db, next_id
+from ..permissions import has_action
 from ..utils import clean_text, parse_bool, parse_decimal, parse_int
 
 
@@ -49,7 +50,7 @@ def products_list(request: Request):
         ],
         "rows": rows,
     }
-    if "client" not in user.get("roles", []):
+    if has_action(user, "products.manage"):
         context["create_url"] = "/products/new"
         context["create_label"] = "Добавить продукцию"
     return render_template(request, "table_list.html", context)
@@ -57,11 +58,9 @@ def products_list(request: Request):
 
 @router.get("/products/new")
 def product_new_page(request: Request):
-    user = authorize_section(request, "products")
+    user = authorize_action(request, "products.manage", "У вас нет прав на управление продукцией.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
     return render_template(
         request,
         "form.html",
@@ -79,11 +78,9 @@ def product_new(
     shelf_life_days: str = Form(...),
     is_active: str | None = Form(None),
 ):
-    user = authorize_section(request, "products")
+    user = authorize_action(request, "products.manage", "У вас нет прав на управление продукцией.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
 
     form_data = {"name": name, "category": category, "unit": unit, "price": price, "shelf_life_days": shelf_life_days, "is_active": parse_bool(is_active)}
     try:
@@ -133,7 +130,7 @@ def product_detail(request: Request, product_id: int):
         {
             "title": product["name"],
             "back_url": "/products",
-            "edit_url": None if "client" in user.get("roles", []) else f"/products/{product_id}/edit",
+            "edit_url": f"/products/{product_id}/edit" if has_action(user, "products.manage") else None,
             "details": [
                 ("ID", product["product_id"]),
                 ("Категория", product["category"]),
@@ -157,11 +154,9 @@ def product_detail(request: Request, product_id: int):
 
 @router.get("/products/{product_id}/edit")
 def product_edit_page(request: Request, product_id: int):
-    user = authorize_section(request, "products")
+    user = authorize_action(request, "products.manage", "У вас нет прав на управление продукцией.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
     product = fetch_one("SELECT * FROM products WHERE product_id = %s", (product_id,))
     if not product:
         return render_template(request, "error.html", {"title": "Продукция не найдена", "message": "Карточка продукции не найдена."}, status_code=404)
@@ -183,11 +178,9 @@ def product_edit(
     shelf_life_days: str = Form(...),
     is_active: str | None = Form(None),
 ):
-    user = authorize_section(request, "products")
+    user = authorize_action(request, "products.manage", "У вас нет прав на управление продукцией.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать продукцию."}, status_code=403)
 
     form_data = {"name": name, "category": category, "unit": unit, "price": price, "shelf_life_days": shelf_life_days, "is_active": parse_bool(is_active)}
     try:

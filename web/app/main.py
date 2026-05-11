@@ -67,7 +67,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         request,
         "error.html",
         {
-            "title": "Application Error",
+            "title": "Ошибка приложения",
             "message": str(exc),
         },
         status_code=500,

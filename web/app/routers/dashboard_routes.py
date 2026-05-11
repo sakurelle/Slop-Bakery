@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request
 
-from ..auth import authorize_section, render_template
+from ..auth import authorize_action, authorize_section, render_template
 from ..database import fetch_all, fetch_one
 from ..permissions import get_primary_role
 
@@ -121,7 +121,7 @@ def dashboard(request: Request):
 
 @router.get("/admin/users")
 def users_list(request: Request):
-    user = authorize_section(request, "users_roles")
+    user = authorize_action(request, "users.manage", "У вас нет прав на просмотр списка пользователей.")
     if not isinstance(user, dict):
         return user
 
@@ -160,7 +160,7 @@ def users_list(request: Request):
 
 @router.get("/admin/roles")
 def roles_list(request: Request):
-    user = authorize_section(request, "users_roles")
+    user = authorize_action(request, "users.manage", "У вас нет прав на просмотр ролей.")
     if not isinstance(user, dict):
         return user
 

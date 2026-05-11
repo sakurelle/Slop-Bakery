@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Form, Query, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_section, redirect_to, render_template, set_flash
+from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
 from ..database import fetch_all, get_db, next_id
+from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_datetime_local, parse_int
 
 
@@ -61,6 +62,28 @@ def quality_fields(delivery_items, production_batches, inspectors, results, data
     ]
 
 
+def get_quality_form_sources():
+    delivery_items = fetch_all(
+        """
+        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'без партии') AS display_name
+        FROM delivery_items AS di
+        JOIN raw_materials AS rm ON rm.material_id = di.material_id
+        ORDER BY di.delivery_item_id DESC
+        """
+    )
+    production_batches = fetch_all(
+        """
+        SELECT pb.production_batch_id, pb.batch_number || ' / ' || p.name AS display_name
+        FROM production_batches AS pb
+        JOIN products AS p ON p.product_id = pb.product_id
+        ORDER BY pb.production_batch_id DESC
+        """
+    )
+    inspectors = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
+    results = fetch_all("SELECT status_code, name FROM quality_statuses ORDER BY name")
+    return delivery_items, production_batches, inspectors, results
+
+
 @router.get("/quality")
 def quality_list(
     request: Request,
@@ -96,79 +119,60 @@ def quality_list(
         query += " WHERE " + " AND ".join(filters)
     query += " ORDER BY qc.checked_at DESC, qc.quality_check_id DESC"
     rows = fetch_all(query, tuple(params))
-    return render_template(
-        request,
-        "table_list.html",
-        {
-            "title": "Контроль качества",
-            "subtitle": "Журнал контроля качества сырья и готовой продукции.",
-            "headers": [
-                ("quality_check_id", "ID"),
-                ("check_type", "Тип"),
-                ("object_name", "Объект"),
-                ("checked_at", "Дата проверки"),
-                ("result_code", "Результат"),
-                ("document_number", "Документ"),
+    context = {
+        "title": "Контроль качества",
+        "subtitle": "Журнал контроля качества сырья и готовой продукции.",
+        "headers": [
+            ("quality_check_id", "ID"),
+            ("check_type", "Тип"),
+            ("object_name", "Объект"),
+            ("checked_at", "Дата проверки"),
+            ("result_code", "Результат"),
+            ("document_number", "Документ"),
+        ],
+        "rows": rows,
+        "filters": {
+            "action": "/quality",
+            "fields": [
+                {
+                    "name": "check_type",
+                    "label": "Тип проверки",
+                    "type": "select",
+                    "value": check_type or "",
+                    "options": [
+                        {"value": "", "label": "Все типы"},
+                        {"value": "raw_material", "label": "Сырьё"},
+                        {"value": "finished_product", "label": "Готовая продукция"},
+                    ],
+                },
+                {
+                    "name": "result_code",
+                    "label": "Результат",
+                    "type": "select",
+                    "value": result_code or "",
+                    "options": [
+                        {"value": "", "label": "Все результаты"},
+                        {"value": "passed", "label": "Соответствует"},
+                        {"value": "failed", "label": "Не соответствует"},
+                        {"value": "conditional", "label": "Условно"},
+                    ],
+                },
             ],
-            "rows": rows,
-            "create_url": "/quality/new",
-            "create_label": "Добавить проверку",
-            "filters": {
-                "action": "/quality",
-                "fields": [
-                    {
-                        "name": "check_type",
-                        "label": "Тип проверки",
-                        "type": "select",
-                        "value": check_type or "",
-                        "options": [
-                            {"value": "", "label": "Все типы"},
-                            {"value": "raw_material", "label": "Сырьё"},
-                            {"value": "finished_product", "label": "Готовая продукция"},
-                        ],
-                    },
-                    {
-                        "name": "result_code",
-                        "label": "Результат",
-                        "type": "select",
-                        "value": result_code or "",
-                        "options": [
-                            {"value": "", "label": "Все результаты"},
-                            {"value": "passed", "label": "Соответствует"},
-                            {"value": "failed", "label": "Не соответствует"},
-                            {"value": "conditional", "label": "Условно"},
-                        ],
-                    },
-                ],
-                "show_filters": True,
-            },
+            "show_filters": True,
         },
-    )
+    }
+    if has_action(user, "quality.create"):
+        context["create_url"] = "/quality/new"
+        context["create_label"] = "Добавить проверку"
+    return render_template(request, "table_list.html", context)
 
 
 @router.get("/quality/new")
 def quality_new_page(request: Request):
-    user = authorize_section(request, "quality")
+    user = authorize_action(request, "quality.create", "У вас нет прав на создание записей контроля качества.")
     if not isinstance(user, dict):
         return user
-    delivery_items = fetch_all(
-        """
-        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'без партии') AS display_name
-        FROM delivery_items AS di
-        JOIN raw_materials AS rm ON rm.material_id = di.material_id
-        ORDER BY di.delivery_item_id DESC
-        """
-    )
-    production_batches = fetch_all(
-        """
-        SELECT pb.production_batch_id, pb.batch_number || ' / ' || p.name AS display_name
-        FROM production_batches AS pb
-        JOIN products AS p ON p.product_id = pb.product_id
-        ORDER BY pb.production_batch_id DESC
-        """
-    )
-    inspectors = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
-    results = fetch_all("SELECT status_code, name FROM quality_statuses ORDER BY name")
+    delivery_items, production_batches, inspectors, results = get_quality_form_sources()
     return render_template(request, "form.html", {"title": "Добавить проверку качества", "action": "/quality/new", "fields": quality_fields(delivery_items, production_batches, inspectors, results), "back_url": "/quality", "submit_label": "Создать запись"})
 
 
@@ -187,32 +191,36 @@ def quality_new(
     document_number: str = Form(""),
     note: str = Form(""),
 ):
-    user = authorize_section(request, "quality")
+    user = authorize_action(request, "quality.create", "У вас нет прав на создание записей контроля качества.")
     if not isinstance(user, dict):
         return user
-    delivery_items = fetch_all(
-        """
-        SELECT di.delivery_item_id, rm.name || ' / ' || COALESCE(di.batch_number, 'без партии') AS display_name
-        FROM delivery_items AS di
-        JOIN raw_materials AS rm ON rm.material_id = di.material_id
-        ORDER BY di.delivery_item_id DESC
-        """
-    )
-    production_batches = fetch_all(
-        """
-        SELECT pb.production_batch_id, pb.batch_number || ' / ' || p.name AS display_name
-        FROM production_batches AS pb
-        JOIN products AS p ON p.product_id = pb.product_id
-        ORDER BY pb.production_batch_id DESC
-        """
-    )
-    inspectors = fetch_all("SELECT user_id, full_name FROM users WHERE status_code = 'active' ORDER BY full_name")
-    results = fetch_all("SELECT status_code, name FROM quality_statuses ORDER BY name")
+    delivery_items, production_batches, inspectors, results = get_quality_form_sources()
     form_data = {"check_type": check_type, "delivery_item_id": delivery_item_id, "production_batch_id": production_batch_id, "checked_at": checked_at, "inspector_user_id": inspector_user_id, "result_code": result_code, "parameter_name": parameter_name, "measured_value": measured_value, "standard_value": standard_value, "document_number": document_number, "note": note}
     try:
+        check_type_value = clean_text(check_type)
+        delivery_item_id_value = parse_int(delivery_item_id, "Позиция поставки", allow_none=True)
+        production_batch_id_value = parse_int(production_batch_id, "Производственная партия", allow_none=True)
+        if check_type_value == "raw_material":
+            if delivery_item_id_value is None or production_batch_id_value is not None:
+                raise ValueError("Для проверки сырья нужно указать позицию поставки и не указывать производственную партию.")
+        elif check_type_value == "finished_product":
+            if production_batch_id_value is None or delivery_item_id_value is not None:
+                raise ValueError("Для проверки готовой продукции нужно указать производственную партию и не указывать позицию поставки.")
+        else:
+            raise ValueError("Недопустимый тип проверки качества.")
+
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             quality_check_id = next_id(conn, "quality_checks", "quality_check_id")
             with conn.cursor() as cur:
+                if delivery_item_id_value is not None:
+                    cur.execute("SELECT 1 FROM delivery_items WHERE delivery_item_id = %s", (delivery_item_id_value,))
+                    if not cur.fetchone():
+                        raise ValueError("Указанная позиция поставки не существует.")
+                if production_batch_id_value is not None:
+                    cur.execute("SELECT 1 FROM production_batches WHERE production_batch_id = %s", (production_batch_id_value,))
+                    if not cur.fetchone():
+                        raise ValueError("Указанная производственная партия не существует.")
+
                 cur.execute(
                     """
                     INSERT INTO quality_checks (
@@ -224,9 +232,9 @@ def quality_new(
                     """,
                     (
                         quality_check_id,
-                        clean_text(check_type),
-                        parse_int(delivery_item_id, "Позиция поставки", allow_none=True),
-                        parse_int(production_batch_id, "Производственная партия", allow_none=True),
+                        check_type_value,
+                        delivery_item_id_value,
+                        production_batch_id_value,
                         parse_datetime_local(checked_at, "Дата проверки"),
                         parse_int(inspector_user_id, "Инспектор", allow_none=True),
                         clean_text(result_code),

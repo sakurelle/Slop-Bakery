@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, Request
 
-from ..auth import authorize_section, render_template
+from ..auth import authorize_action, render_template
 from ..database import fetch_all
 from ..utils import build_options
 
@@ -16,7 +16,7 @@ def audit_page(
     action_type: str | None = Query(default=None),
     changed_date: str | None = Query(default=None),
 ):
-    user = authorize_section(request, "audit")
+    user = authorize_action(request, "audit.view", "У вас нет прав на просмотр журнала аудита.")
     if not isinstance(user, dict):
         return user
 

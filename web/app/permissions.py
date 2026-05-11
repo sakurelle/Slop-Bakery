@@ -28,6 +28,37 @@ SECTION_RULES = {
     "users_roles": {"admin"},
 }
 
+ACTION_RULES = {
+    "orders.view_all": {"admin", "technologist", "warehouse_worker"},
+    "orders.view_own": {"client"},
+    "orders.create": {"admin", "client"},
+    "orders.add_item": {"admin", "client"},
+    "orders.change_status": {"admin", "technologist"},
+    "orders.cancel": {"admin"},
+    "invoices.view_all": {"admin"},
+    "invoices.view_own": {"client"},
+    "invoices.create": {"admin"},
+    "invoices.change_status": {"admin"},
+    "shipments.view_all": {"admin", "warehouse_worker"},
+    "shipments.view_own": {"client"},
+    "shipments.create": {"admin", "warehouse_worker"},
+    "shipments.add_item": {"admin", "warehouse_worker"},
+    "shipments.change_status": {"admin", "warehouse_worker"},
+    "production.view": {"admin", "technologist"},
+    "production.create": {"admin", "technologist"},
+    "quality.view": {"admin", "quality_control"},
+    "quality.create": {"admin", "quality_control"},
+    "audit.view": {"admin"},
+    "users.manage": {"admin"},
+    "deliveries.view": {"admin", "warehouse_worker"},
+    "deliveries.create": {"admin", "warehouse_worker"},
+    "deliveries.add_item": {"admin", "warehouse_worker"},
+    "deliveries.change_status": {"admin", "warehouse_worker"},
+    "materials.manage": {"admin", "warehouse_worker"},
+    "products.manage": {"admin"},
+    "tech_cards.manage": {"admin", "technologist"},
+}
+
 NAV_ITEMS = [
     {"section": "dashboard", "label": "Главная", "path": "/"},
     {"section": "customers", "label": "Клиенты", "path": "/customers"},
@@ -74,6 +105,13 @@ def can_access(user: dict | None, section: str) -> bool:
     if "admin" in roles:
         return True
     return bool(roles & SECTION_RULES.get(section, set()))
+
+
+def has_action(user: dict | None, action: str) -> bool:
+    roles = set(get_roles(user))
+    if "admin" in roles:
+        return True
+    return bool(roles & ACTION_RULES.get(action, set()))
 
 
 def visible_sections(user: dict | None) -> list[dict]:

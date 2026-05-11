@@ -3,12 +3,16 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_section, redirect_to, render_template, set_flash
+from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
 from ..database import fetch_all, fetch_one, get_db, next_id
+from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_bool, parse_date, parse_decimal, parse_int
 
 
 router = APIRouter()
+
+DELIVERY_STOCK_STATUSES = {"received", "accepted"}
+DELIVERY_MUTABLE_STATUSES = {"planned", "received"}
 
 
 def material_fields(data=None):
@@ -67,6 +71,76 @@ def delivery_item_fields(materials, data=None):
     ]
 
 
+def delivery_status_fields(statuses, current_status):
+    return [
+        {
+            "name": "status_code",
+            "label": "Статус",
+            "type": "select",
+            "required": True,
+            "value": current_status,
+            "options": build_options(statuses, "status_code", "name"),
+        }
+    ]
+
+
+def fetch_delivery_for_user(delivery_id: int):
+    return fetch_one(
+        """
+        SELECT d.*, s.company_name
+        FROM raw_material_deliveries AS d
+        JOIN suppliers AS s ON s.supplier_id = d.supplier_id
+        WHERE d.delivery_id = %s
+        """,
+        (delivery_id,),
+    )
+
+
+def sync_delivery_stock(conn, delivery_id: int) -> int:
+    with conn.cursor() as cur:
+        cur.execute("SELECT status_code FROM raw_material_deliveries WHERE delivery_id = %s", (delivery_id,))
+        delivery = cur.fetchone()
+        if not delivery:
+            raise ValueError("Поставка не найдена.")
+        if delivery["status_code"] not in DELIVERY_STOCK_STATUSES:
+            raise ValueError("Остаток сырья можно формировать только для полученной или принятой поставки.")
+
+        cur.execute(
+            """
+            SELECT di.delivery_item_id, di.material_id, di.batch_number, di.quantity, di.expiry_date
+            FROM delivery_items AS di
+            LEFT JOIN raw_material_stock AS rms ON rms.delivery_item_id = di.delivery_item_id
+            WHERE di.delivery_id = %s
+              AND rms.stock_id IS NULL
+            ORDER BY di.delivery_item_id
+            """,
+            (delivery_id,),
+        )
+        missing_stock_items = cur.fetchall()
+
+        created_count = 0
+        for item in missing_stock_items:
+            stock_id = next_id(conn, "raw_material_stock", "stock_id")
+            cur.execute(
+                """
+                INSERT INTO raw_material_stock (
+                    stock_id, material_id, delivery_item_id, batch_number, quantity_current, expiry_date
+                )
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    stock_id,
+                    item["material_id"],
+                    item["delivery_item_id"],
+                    item["batch_number"],
+                    item["quantity"],
+                    item["expiry_date"],
+                ),
+            )
+            created_count += 1
+        return created_count
+
+
 @router.get("/materials")
 def materials_list(request: Request):
     user = authorize_section(request, "materials")
@@ -106,7 +180,7 @@ def materials_list(request: Request):
         ],
         "rows": rows,
     }
-    if "client" not in user.get("roles", []):
+    if has_action(user, "materials.manage"):
         context["create_url"] = "/materials/new"
         context["create_label"] = "Добавить сырьё"
     return render_template(request, "table_list.html", context)
@@ -114,11 +188,9 @@ def materials_list(request: Request):
 
 @router.get("/materials/new")
 def material_new_page(request: Request):
-    user = authorize_section(request, "materials")
+    user = authorize_action(request, "materials.manage", "У вас нет прав на управление сырьём.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты не могут управлять сырьём."}, status_code=403)
     return render_template(request, "form.html", {"title": "Добавить сырьё", "action": "/materials/new", "fields": material_fields(), "back_url": "/materials", "submit_label": "Создать запись"})
 
 
@@ -132,7 +204,7 @@ def material_new(
     storage_conditions: str = Form(""),
     is_active: str | None = Form(None),
 ):
-    user = authorize_section(request, "materials")
+    user = authorize_action(request, "materials.manage", "У вас нет прав на управление сырьём.")
     if not isinstance(user, dict):
         return user
     form_data = {"name": name, "unit": unit, "min_stock_qty": min_stock_qty, "shelf_life_days": shelf_life_days, "storage_conditions": storage_conditions, "is_active": parse_bool(is_active)}
@@ -186,7 +258,7 @@ def material_detail(request: Request, material_id: int):
         {
             "title": material["name"],
             "back_url": "/materials",
-            "edit_url": f"/materials/{material_id}/edit",
+            "edit_url": f"/materials/{material_id}/edit" if has_action(user, "materials.manage") else None,
             "details": [
                 ("ID", material["material_id"]),
                 ("Единица измерения", material["unit"]),
@@ -209,7 +281,7 @@ def material_detail(request: Request, material_id: int):
 
 @router.get("/materials/{material_id}/edit")
 def material_edit_page(request: Request, material_id: int):
-    user = authorize_section(request, "materials")
+    user = authorize_action(request, "materials.manage", "У вас нет прав на управление сырьём.")
     if not isinstance(user, dict):
         return user
     material = fetch_one("SELECT * FROM raw_materials WHERE material_id = %s", (material_id,))
@@ -229,7 +301,7 @@ def material_edit(
     storage_conditions: str = Form(""),
     is_active: str | None = Form(None),
 ):
-    user = authorize_section(request, "materials")
+    user = authorize_action(request, "materials.manage", "У вас нет прав на управление сырьём.")
     if not isinstance(user, dict):
         return user
     form_data = {"name": name, "unit": unit, "min_stock_qty": min_stock_qty, "shelf_life_days": shelf_life_days, "storage_conditions": storage_conditions, "is_active": parse_bool(is_active)}
@@ -284,30 +356,28 @@ def deliveries_list(request: Request):
     )
     for row in rows:
         row["_detail_url"] = f"/deliveries/{row['delivery_id']}"
-    return render_template(
-        request,
-        "table_list.html",
-        {
-            "title": "Поставки сырья",
-            "subtitle": "Входящие поставки от поставщиков.",
-            "headers": [
-                ("delivery_id", "ID"),
-                ("delivery_number", "Номер поставки"),
-                ("company_name", "Поставщик"),
-                ("delivery_date", "Дата"),
-                ("status_code", "Статус"),
-                ("total_amount", "Сумма"),
-            ],
-            "rows": rows,
-            "create_url": "/deliveries/new",
-            "create_label": "Создать поставку",
-        },
-    )
+    context = {
+        "title": "Поставки сырья",
+        "subtitle": "Входящие поставки от поставщиков.",
+        "headers": [
+            ("delivery_id", "ID"),
+            ("delivery_number", "Номер поставки"),
+            ("company_name", "Поставщик"),
+            ("delivery_date", "Дата"),
+            ("status_code", "Статус"),
+            ("total_amount", "Сумма"),
+        ],
+        "rows": rows,
+    }
+    if has_action(user, "deliveries.create"):
+        context["create_url"] = "/deliveries/new"
+        context["create_label"] = "Создать поставку"
+    return render_template(request, "table_list.html", context)
 
 
 @router.get("/deliveries/new")
 def delivery_new_page(request: Request):
-    user = authorize_section(request, "deliveries")
+    user = authorize_action(request, "deliveries.create", "У вас нет прав на создание поставок.")
     if not isinstance(user, dict):
         return user
     suppliers = fetch_all("SELECT supplier_id, company_name FROM suppliers WHERE is_active = TRUE ORDER BY company_name")
@@ -325,13 +395,16 @@ def delivery_new(
     total_amount: str = Form("0"),
     note: str = Form(""),
 ):
-    user = authorize_section(request, "deliveries")
+    user = authorize_action(request, "deliveries.create", "У вас нет прав на создание поставок.")
     if not isinstance(user, dict):
         return user
     suppliers = fetch_all("SELECT supplier_id, company_name FROM suppliers WHERE is_active = TRUE ORDER BY company_name")
     statuses = fetch_all("SELECT status_code, name FROM delivery_statuses ORDER BY name")
     form_data = {"supplier_id": supplier_id, "delivery_date": delivery_date, "status_code": status_code, "document_ref": document_ref, "total_amount": total_amount, "note": note}
     try:
+        delivery_status = clean_text(status_code)
+        if delivery_status not in {"planned", "received", "accepted", "rejected", "cancelled"}:
+            raise ValueError("Недопустимый статус поставки.")
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             delivery_id = next_id(conn, "raw_material_deliveries", "delivery_id")
             delivery_number = f"DN-WEB-{delivery_id:04d}"
@@ -349,7 +422,7 @@ def delivery_new(
                         parse_int(supplier_id, "Поставщик"),
                         delivery_number,
                         parse_date(delivery_date, "Дата поставки"),
-                        clean_text(status_code),
+                        delivery_status,
                         user["user_id"],
                         clean_text(document_ref),
                         parse_decimal(total_amount, "Общая сумма"),
@@ -367,15 +440,7 @@ def delivery_detail(request: Request, delivery_id: int):
     user = authorize_section(request, "deliveries")
     if not isinstance(user, dict):
         return user
-    delivery = fetch_one(
-        """
-        SELECT d.*, s.company_name
-        FROM raw_material_deliveries AS d
-        JOIN suppliers AS s ON s.supplier_id = d.supplier_id
-        WHERE d.delivery_id = %s
-        """,
-        (delivery_id,),
-    )
+    delivery = fetch_delivery_for_user(delivery_id)
     if not delivery:
         return render_template(request, "error.html", {"title": "Поставка не найдена", "message": "Карточка поставки не найдена."}, status_code=404)
     items = fetch_all(
@@ -388,13 +453,18 @@ def delivery_detail(request: Request, delivery_id: int):
         """,
         (delivery_id,),
     )
+    extra_actions = []
+    if has_action(user, "deliveries.add_item") and delivery["status_code"] in DELIVERY_MUTABLE_STATUSES:
+        extra_actions.append({"label": "Добавить позицию", "url": f"/deliveries/{delivery_id}/items/new"})
+    if has_action(user, "deliveries.change_status"):
+        extra_actions.append({"label": "Изменить статус", "url": f"/deliveries/{delivery_id}/status"})
     return render_template(
         request,
         "detail.html",
         {
             "title": delivery["delivery_number"],
             "back_url": "/deliveries",
-            "extra_actions": [{"label": "Добавить позицию", "url": f"/deliveries/{delivery_id}/items/new"}],
+            "extra_actions": extra_actions,
             "details": [
                 ("ID", delivery["delivery_id"]),
                 ("Поставщик", delivery["company_name"]),
@@ -418,9 +488,14 @@ def delivery_detail(request: Request, delivery_id: int):
 
 @router.get("/deliveries/{delivery_id}/items/new")
 def delivery_item_new_page(request: Request, delivery_id: int):
-    user = authorize_section(request, "deliveries")
+    user = authorize_action(request, "deliveries.add_item", "У вас нет прав на добавление позиций поставки.")
     if not isinstance(user, dict):
         return user
+    delivery = fetch_delivery_for_user(delivery_id)
+    if not delivery:
+        return render_template(request, "error.html", {"title": "Поставка не найдена", "message": "Карточка поставки не найдена."}, status_code=404)
+    if delivery["status_code"] not in DELIVERY_MUTABLE_STATUSES:
+        return forbidden_response(request, "Нельзя добавлять позиции в поставку с этим статусом.")
     materials = fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
     return render_template(request, "form.html", {"title": f"Добавить позицию в поставку #{delivery_id}", "action": f"/deliveries/{delivery_id}/items/new", "fields": delivery_item_fields(materials), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Добавить позицию"})
 
@@ -435,20 +510,33 @@ def delivery_item_new(
     batch_number: str = Form(""),
     expiry_date: str = Form(...),
 ):
-    user = authorize_section(request, "deliveries")
+    user = authorize_action(request, "deliveries.add_item", "У вас нет прав на добавление позиций поставки.")
     if not isinstance(user, dict):
         return user
+    delivery = fetch_delivery_for_user(delivery_id)
+    if not delivery:
+        return render_template(request, "error.html", {"title": "Поставка не найдена", "message": "Карточка поставки не найдена."}, status_code=404)
     materials = fetch_all("SELECT material_id, name FROM raw_materials WHERE is_active = TRUE ORDER BY name")
     form_data = {"material_id": material_id, "quantity": quantity, "unit_price": unit_price, "batch_number": batch_number, "expiry_date": expiry_date}
+
+    if delivery["status_code"] not in DELIVERY_MUTABLE_STATUSES:
+        return forbidden_response(request, "Нельзя добавлять позиции в поставку с этим статусом.")
+
     try:
+        material_id_value = parse_int(material_id, "Сырьё")
+        quantity_value = parse_decimal(quantity, "Количество")
+        unit_price_value = parse_decimal(unit_price, "Цена за единицу")
+        expiry_date_value = parse_date(expiry_date, "Срок годности")
+        batch_value = clean_text(batch_number)
+        if quantity_value <= 0:
+            raise ValueError("Количество должно быть больше нуля.")
+        if unit_price_value < 0:
+            raise ValueError("Цена не может быть отрицательной.")
+        if expiry_date_value <= delivery["delivery_date"]:
+            raise ValueError("Срок годности должен быть позже даты поставки.")
+
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             delivery_item_id = next_id(conn, "delivery_items", "delivery_item_id")
-            stock_id = next_id(conn, "raw_material_stock", "stock_id")
-            material_id_value = parse_int(material_id, "Сырьё")
-            quantity_value = parse_decimal(quantity, "Количество")
-            unit_price_value = parse_decimal(unit_price, "Цена за единицу")
-            expiry_date_value = parse_date(expiry_date, "Срок годности")
-            batch_value = clean_text(batch_number)
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -458,15 +546,6 @@ def delivery_item_new(
                     VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (delivery_item_id, delivery_id, material_id_value, quantity_value, unit_price_value, batch_value, expiry_date_value),
-                )
-                cur.execute(
-                    """
-                    INSERT INTO raw_material_stock (
-                        stock_id, material_id, delivery_item_id, batch_number, quantity_current, expiry_date
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (stock_id, material_id_value, delivery_item_id, batch_value, quantity_value, expiry_date_value),
                 )
                 cur.execute(
                     """
@@ -480,10 +559,61 @@ def delivery_item_new(
                     """,
                     (delivery_id, delivery_id),
                 )
+                if delivery["status_code"] in DELIVERY_STOCK_STATUSES:
+                    sync_delivery_stock(conn, delivery_id)
         set_flash(request, "Позиция поставки успешно добавлена.")
         return redirect_to(f"/deliveries/{delivery_id}")
     except (PsycopgError, ValueError) as exc:
         return render_template(request, "form.html", {"title": f"Добавить позицию в поставку #{delivery_id}", "action": f"/deliveries/{delivery_id}/items/new", "fields": delivery_item_fields(materials, form_data), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Добавить позицию", "error_message": str(exc)}, status_code=400)
+
+
+@router.get("/deliveries/{delivery_id}/status")
+def delivery_status_page(request: Request, delivery_id: int):
+    user = authorize_action(request, "deliveries.change_status", "У вас нет прав на изменение статуса поставки.")
+    if not isinstance(user, dict):
+        return user
+    delivery = fetch_delivery_for_user(delivery_id)
+    if not delivery:
+        return render_template(request, "error.html", {"title": "Поставка не найдена", "message": "Карточка поставки не найдена."}, status_code=404)
+    statuses = fetch_all("SELECT status_code, name FROM delivery_statuses ORDER BY name")
+    return render_template(request, "form.html", {"title": f"Изменить статус поставки #{delivery_id}", "action": f"/deliveries/{delivery_id}/status", "fields": delivery_status_fields(statuses, delivery['status_code']), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Обновить статус"})
+
+
+@router.post("/deliveries/{delivery_id}/status")
+def delivery_status_update(request: Request, delivery_id: int, status_code: str = Form(...)):
+    user = authorize_action(request, "deliveries.change_status", "У вас нет прав на изменение статуса поставки.")
+    if not isinstance(user, dict):
+        return user
+    delivery = fetch_delivery_for_user(delivery_id)
+    if not delivery:
+        return render_template(request, "error.html", {"title": "Поставка не найдена", "message": "Карточка поставки не найдена."}, status_code=404)
+    statuses = fetch_all("SELECT status_code, name FROM delivery_statuses ORDER BY name")
+    try:
+        new_status = clean_text(status_code)
+        if new_status not in {"planned", "received", "accepted", "rejected", "cancelled"}:
+            raise ValueError("Недопустимый статус поставки.")
+        with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE raw_material_deliveries
+                    SET status_code = %s,
+                        received_by_user_id = CASE WHEN %s IN ('received', 'accepted') THEN %s ELSE received_by_user_id END
+                    WHERE delivery_id = %s
+                    """,
+                    (new_status, new_status, user["user_id"], delivery_id),
+                )
+            if new_status in DELIVERY_STOCK_STATUSES:
+                created_count = sync_delivery_stock(conn, delivery_id)
+            else:
+                created_count = 0
+        if created_count:
+            set_flash(request, f"Статус поставки обновлён, на склад добавлено партий: {created_count}.")
+        else:
+            set_flash(request, "Статус поставки успешно обновлён.")
+        return redirect_to(f"/deliveries/{delivery_id}")
+    except (PsycopgError, ValueError) as exc:
+        return render_template(request, "form.html", {"title": f"Изменить статус поставки #{delivery_id}", "action": f"/deliveries/{delivery_id}/status", "fields": delivery_status_fields(statuses, clean_text(status_code) or delivery['status_code']), "back_url": f"/deliveries/{delivery_id}", "submit_label": "Обновить статус", "error_message": str(exc)}, status_code=400)
 
 
 @router.get("/material-stock")

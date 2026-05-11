@@ -1,18 +1,38 @@
+from decimal import Decimal
+
 from fastapi import APIRouter, Form, Query, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_section, redirect_to, render_template, set_flash
+from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
 from ..database import fetch_all, fetch_one, get_db, next_id
+from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_date, parse_decimal, parse_int
 
 
 router = APIRouter()
 
+ORDER_STATUS_TRANSITIONS = {
+    "draft": {"confirmed", "cancelled"},
+    "confirmed": {"in_production", "cancelled"},
+    "in_production": {"ready"},
+    "ready": {"shipped"},
+    "shipped": {"completed"},
+    "completed": set(),
+    "cancelled": set(),
+}
 
-def order_fields(customers, statuses, data=None, is_client: bool = False, customer_id_value=None):
+
+def is_client(user: dict) -> bool:
+    return "client" in user.get("roles", [])
+
+
+def order_fields(customers, data=None, is_client_user: bool = False, customer_id_value=None):
     data = data or {}
     fields = []
-    if not is_client:
+    if is_client_user:
+        fields.append({"name": "customer_id", "label": "Клиент", "type": "hidden", "value": customer_id_value})
+        fields.append({"name": "status_code", "label": "Статус", "type": "hidden", "value": "draft"})
+    else:
         fields.append(
             {
                 "name": "customer_id",
@@ -23,27 +43,9 @@ def order_fields(customers, statuses, data=None, is_client: bool = False, custom
                 "options": build_options(customers, "customer_id", "display_name"),
             }
         )
-    else:
-        fields.append(
-            {
-                "name": "customer_id",
-                "label": "Клиент",
-                "type": "hidden",
-                "value": customer_id_value,
-            }
-        )
-
     fields.extend(
         [
             {"name": "planned_shipment_date", "label": "Плановая дата отгрузки", "type": "date", "value": data.get("planned_shipment_date", "")},
-            {
-                "name": "status_code",
-                "label": "Статус",
-                "type": "select",
-                "required": True,
-                "value": data.get("status_code", "draft"),
-                "options": build_options(statuses, "status_code", "name"),
-            },
             {"name": "comment", "label": "Комментарий", "type": "textarea", "value": data.get("comment", "")},
         ]
     )
@@ -62,7 +64,6 @@ def order_item_fields(products, data=None):
             "options": build_options(products, "product_id", "name"),
         },
         {"name": "quantity", "label": "Количество", "type": "number", "required": True, "step": "0.001", "min": "0.001", "value": data.get("quantity", "")},
-        {"name": "unit_price", "label": "Цена за единицу", "type": "number", "required": True, "step": "0.01", "min": "0", "value": data.get("unit_price", "")},
     ]
 
 
@@ -79,6 +80,64 @@ def status_fields(statuses, current_status):
     ]
 
 
+def get_order_query() -> str:
+    return """
+        SELECT
+            o.*,
+            COALESCE(c.company_name, c.full_name) AS customer_name
+        FROM customer_orders AS o
+        JOIN customers AS c ON c.customer_id = o.customer_id
+        WHERE o.order_id = %s
+    """
+
+
+def fetch_order_for_user(order_id: int, user: dict):
+    query = get_order_query()
+    params = [order_id]
+    if is_client(user):
+        query += " AND o.customer_id = %s"
+        params.append(user["customer_id"])
+    return fetch_one(query, tuple(params))
+
+
+def get_next_statuses_for_user(order: dict, user: dict) -> list[str]:
+    current_status = order["status_code"]
+    allowed = ORDER_STATUS_TRANSITIONS.get(current_status, set())
+    if not allowed:
+        return []
+    if "admin" in user.get("roles", []):
+        return sorted(allowed)
+    if "technologist" in user.get("roles", []) and current_status == "confirmed":
+        return ["in_production"] if "in_production" in allowed else []
+    return []
+
+
+def validate_order_status_change(order: dict, new_status: str, user: dict) -> None:
+    next_statuses = get_next_statuses_for_user(order, user)
+    if new_status not in next_statuses:
+        raise ValueError("Недопустимый переход статуса заказа для вашей роли.")
+
+
+def fetch_order_status_options(order: dict, user: dict):
+    next_statuses = get_next_statuses_for_user(order, user)
+    if not next_statuses:
+        return []
+    statuses = fetch_all(
+        """
+        SELECT status_code, name
+        FROM order_statuses
+        WHERE status_code = ANY(%s)
+        ORDER BY name
+        """,
+        (next_statuses,),
+    )
+    return statuses
+
+
+def fetch_products_for_order_items():
+    return fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
+
+
 @router.get("/orders")
 def orders_list(
     request: Request,
@@ -91,7 +150,7 @@ def orders_list(
 
     filters = []
     params = []
-    if "client" in user.get("roles", []):
+    if is_client(user):
         filters.append("o.customer_id = %s")
         params.append(user["customer_id"])
     elif customer_id:
@@ -129,52 +188,51 @@ def orders_list(
     )
     statuses = fetch_all("SELECT status_code, name FROM order_statuses ORDER BY name")
 
-    return render_template(
-        request,
-        "table_list.html",
-        {
-            "title": "Заказы",
-            "subtitle": "Заказы клиентов с фильтрацией по клиенту и статусу.",
-            "headers": [
-                ("order_id", "ID"),
-                ("order_number", "Номер заказа"),
-                ("customer_name", "Клиент"),
-                ("order_date", "Дата заказа"),
-                ("planned_shipment_date", "Плановая отгрузка"),
-                ("status_code", "Статус"),
+    context = {
+        "title": "Заказы",
+        "subtitle": "Заказы клиентов с фильтрацией по клиенту и статусу.",
+        "headers": [
+            ("order_id", "ID"),
+            ("order_number", "Номер заказа"),
+            ("customer_name", "Клиент"),
+            ("order_date", "Дата заказа"),
+            ("planned_shipment_date", "Плановая отгрузка"),
+            ("status_code", "Статус"),
+        ],
+        "rows": rows,
+        "filters": {
+            "action": "/orders",
+            "fields": [
+                {
+                    "name": "customer_id",
+                    "label": "Клиент",
+                    "type": "select",
+                    "value": customer_id or "",
+                    "options": build_options(customers, "customer_id", "display_name", blank_label="Все клиенты"),
+                },
+                {
+                    "name": "status_code",
+                    "label": "Статус",
+                    "type": "select",
+                    "value": status_code or "",
+                    "options": build_options(statuses, "status_code", "name", blank_label="Все статусы"),
+                },
             ],
-            "rows": rows,
-            "create_url": "/orders/new",
-            "create_label": "Создать заказ",
-            "filters": {
-                "action": "/orders",
-                "fields": [
-                    {
-                        "name": "customer_id",
-                        "label": "Клиент",
-                        "type": "select",
-                        "value": customer_id or "",
-                        "options": build_options(customers, "customer_id", "display_name", blank_label="Все клиенты"),
-                    },
-                    {
-                        "name": "status_code",
-                        "label": "Статус",
-                        "type": "select",
-                        "value": status_code or "",
-                        "options": build_options(statuses, "status_code", "name", blank_label="Все статусы"),
-                    },
-                ],
-                "show_filters": "client" not in user.get("roles", []),
-            },
+            "show_filters": not is_client(user),
         },
-    )
+    }
+    if has_action(user, "orders.create"):
+        context["create_url"] = "/orders/new"
+        context["create_label"] = "Создать заказ"
+    return render_template(request, "table_list.html", context)
 
 
 @router.get("/orders/new")
 def order_new_page(request: Request):
-    user = authorize_section(request, "orders")
+    user = authorize_action(request, "orders.create", "У вас нет прав на создание заказов.")
     if not isinstance(user, dict):
         return user
+
     customers = fetch_all(
         """
         SELECT customer_id, COALESCE(company_name, full_name) AS display_name
@@ -183,15 +241,13 @@ def order_new_page(request: Request):
         ORDER BY display_name
         """
     )
-    statuses = fetch_all("SELECT status_code, name FROM order_statuses ORDER BY name")
-    is_client = "client" in user.get("roles", [])
     return render_template(
         request,
         "form.html",
         {
             "title": "Создать заказ",
             "action": "/orders/new",
-            "fields": order_fields(customers, statuses, is_client=is_client, customer_id_value=user.get("customer_id")),
+            "fields": order_fields(customers, is_client_user=is_client(user), customer_id_value=user.get("customer_id")),
             "back_url": "/orders",
             "submit_label": "Создать заказ",
         },
@@ -203,10 +259,9 @@ def order_new(
     request: Request,
     customer_id: str = Form(""),
     planned_shipment_date: str = Form(""),
-    status_code: str = Form(...),
     comment: str = Form(""),
 ):
-    user = authorize_section(request, "orders")
+    user = authorize_action(request, "orders.create", "У вас нет прав на создание заказов.")
     if not isinstance(user, dict):
         return user
 
@@ -218,10 +273,12 @@ def order_new(
         ORDER BY display_name
         """
     )
-    statuses = fetch_all("SELECT status_code, name FROM order_statuses ORDER BY name")
-    is_client = "client" in user.get("roles", [])
-    customer_value = user["customer_id"] if is_client else parse_int(customer_id, "Клиент")
-    form_data = {"customer_id": customer_value, "planned_shipment_date": planned_shipment_date, "status_code": status_code, "comment": comment}
+    is_client_user = is_client(user)
+    customer_value = user["customer_id"] if is_client_user else parse_int(customer_id, "Клиент")
+    form_data = {"customer_id": customer_value, "planned_shipment_date": planned_shipment_date, "comment": comment}
+
+    if is_client_user and not user.get("customer_id"):
+        return forbidden_response(request, "Для клиентского пользователя не привязан клиент. Обратитесь к администратору.")
 
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
@@ -240,12 +297,12 @@ def order_new(
                         order_number,
                         customer_value,
                         parse_date(planned_shipment_date, "Плановая дата отгрузки", allow_none=True),
-                        clean_text(status_code),
+                        "draft",
                         user["user_id"],
                         clean_text(comment),
                     ),
                 )
-        set_flash(request, "Заказ создан. Теперь можно добавить его позиции.")
+        set_flash(request, "Заказ создан со статусом «Черновик». Теперь можно добавить его позиции.")
         return redirect_to(f"/orders/{order_id}")
     except (PsycopgError, ValueError) as exc:
         return render_template(
@@ -254,7 +311,7 @@ def order_new(
             {
                 "title": "Создать заказ",
                 "action": "/orders/new",
-                "fields": order_fields(customers, statuses, form_data, is_client=is_client, customer_id_value=user.get("customer_id")),
+                "fields": order_fields(customers, form_data, is_client_user=is_client_user, customer_id_value=user.get("customer_id")),
                 "back_url": "/orders",
                 "submit_label": "Создать заказ",
                 "error_message": str(exc),
@@ -269,19 +326,7 @@ def order_detail(request: Request, order_id: int):
     if not isinstance(user, dict):
         return user
 
-    query = """
-        SELECT
-            o.*,
-            COALESCE(c.company_name, c.full_name) AS customer_name
-        FROM customer_orders AS o
-        JOIN customers AS c ON c.customer_id = o.customer_id
-        WHERE o.order_id = %s
-    """
-    params = [order_id]
-    if "client" in user.get("roles", []):
-        query += " AND o.customer_id = %s"
-        params.append(user["customer_id"])
-    order = fetch_one(query, tuple(params))
+    order = fetch_order_for_user(order_id, user)
     if not order:
         return render_template(request, "error.html", {"title": "Заказ не найден", "message": "Заказ не найден или недоступен."}, status_code=404)
 
@@ -296,8 +341,10 @@ def order_detail(request: Request, order_id: int):
         (order_id,),
     )
 
-    extra_actions = [{"label": "Добавить позицию", "url": f"/orders/{order_id}/items/new"}]
-    if "client" not in user.get("roles", []):
+    extra_actions = []
+    if has_action(user, "orders.add_item") and order["status_code"] == "draft":
+        extra_actions.append({"label": "Добавить позицию", "url": f"/orders/{order_id}/items/new"})
+    if has_action(user, "orders.change_status") and get_next_statuses_for_user(order, user):
         extra_actions.append({"label": "Изменить статус", "url": f"/orders/{order_id}/status"})
 
     return render_template(
@@ -329,11 +376,28 @@ def order_detail(request: Request, order_id: int):
 
 @router.get("/orders/{order_id}/items/new")
 def order_item_new_page(request: Request, order_id: int):
-    user = authorize_section(request, "orders")
+    user = authorize_action(request, "orders.add_item", "У вас нет прав на добавление позиций заказа.")
     if not isinstance(user, dict):
         return user
-    products = fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Добавить позицию в заказ #{order_id}", "action": f"/orders/{order_id}/items/new", "fields": order_item_fields(products), "back_url": f"/orders/{order_id}", "submit_label": "Добавить позицию"})
+
+    order = fetch_order_for_user(order_id, user)
+    if not order:
+        return render_template(request, "error.html", {"title": "Заказ не найден", "message": "Заказ не найден или недоступен."}, status_code=404)
+    if order["status_code"] != "draft":
+        return forbidden_response(request, "Добавлять позиции можно только в заказ со статусом «Черновик».")
+
+    products = fetch_products_for_order_items()
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Добавить позицию в заказ #{order_id}",
+            "action": f"/orders/{order_id}/items/new",
+            "fields": order_item_fields(products),
+            "back_url": f"/orders/{order_id}",
+            "submit_label": "Добавить позицию",
+        },
+    )
 
 
 @router.post("/orders/{order_id}/items/new")
@@ -342,19 +406,43 @@ def order_item_new(
     order_id: int,
     product_id: str = Form(...),
     quantity: str = Form(...),
-    unit_price: str = Form(...),
 ):
-    user = authorize_section(request, "orders")
+    user = authorize_action(request, "orders.add_item", "У вас нет прав на добавление позиций заказа.")
     if not isinstance(user, dict):
         return user
-    products = fetch_all("SELECT product_id, name FROM products WHERE is_active = TRUE ORDER BY name")
-    form_data = {"product_id": product_id, "quantity": quantity, "unit_price": unit_price}
+
+    order = fetch_order_for_user(order_id, user)
+    if not order:
+        return render_template(request, "error.html", {"title": "Заказ не найден", "message": "Заказ не найден или недоступен."}, status_code=404)
+    products = fetch_products_for_order_items()
+    form_data = {"product_id": product_id, "quantity": quantity}
+
+    if order["status_code"] != "draft":
+        return forbidden_response(request, "Редактировать состав заказа можно только пока он находится в статусе «Черновик».")
+
     try:
         quantity_value = parse_decimal(quantity, "Количество")
-        unit_price_value = parse_decimal(unit_price, "Цена за единицу")
+        if quantity_value <= 0:
+            raise ValueError("Количество должно быть больше нуля.")
+        product_id_value = parse_int(product_id, "Продукция")
+
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             order_item_id = next_id(conn, "order_items", "order_item_id")
             with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT product_id, name, price
+                    FROM products
+                    WHERE product_id = %s AND is_active = TRUE
+                    """,
+                    (product_id_value,),
+                )
+                product = cur.fetchone()
+                if not product:
+                    raise ValueError("Выбранная продукция не существует или недоступна.")
+
+                unit_price_value = Decimal(product["price"])
+                line_amount = quantity_value * unit_price_value
                 cur.execute(
                     """
                     INSERT INTO order_items (
@@ -365,45 +453,90 @@ def order_item_new(
                     (
                         order_item_id,
                         order_id,
-                        parse_int(product_id, "Продукция"),
+                        product_id_value,
                         quantity_value,
                         unit_price_value,
-                        quantity_value * unit_price_value,
+                        line_amount,
                     ),
                 )
-        set_flash(request, "Позиция заказа успешно добавлена.")
+        set_flash(request, "Позиция заказа успешно добавлена. Цена и сумма рассчитаны на сервере.")
         return redirect_to(f"/orders/{order_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Добавить позицию в заказ #{order_id}", "action": f"/orders/{order_id}/items/new", "fields": order_item_fields(products, form_data), "back_url": f"/orders/{order_id}", "submit_label": "Добавить позицию", "error_message": str(exc)}, status_code=400)
+        return render_template(
+            request,
+            "form.html",
+            {
+                "title": f"Добавить позицию в заказ #{order_id}",
+                "action": f"/orders/{order_id}/items/new",
+                "fields": order_item_fields(products, form_data),
+                "back_url": f"/orders/{order_id}",
+                "submit_label": "Добавить позицию",
+                "error_message": str(exc),
+            },
+            status_code=400,
+        )
 
 
 @router.get("/orders/{order_id}/status")
 def order_status_page(request: Request, order_id: int):
-    user = authorize_section(request, "orders")
+    user = authorize_action(request, "orders.change_status", "У вас нет прав на изменение статуса заказа.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты не могут менять статусы заказов."}, status_code=403)
-    order = fetch_one("SELECT order_id, status_code FROM customer_orders WHERE order_id = %s", (order_id,))
+
+    order = fetch_order_for_user(order_id, user)
     if not order:
         return render_template(request, "error.html", {"title": "Заказ не найден", "message": "Карточка заказа не найдена."}, status_code=404)
-    statuses = fetch_all("SELECT status_code, name FROM order_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Изменить статус заказа #{order_id}", "action": f"/orders/{order_id}/status", "fields": status_fields(statuses, order['status_code']), "back_url": f"/orders/{order_id}", "submit_label": "Обновить статус"})
+
+    statuses = fetch_order_status_options(order, user)
+    if not statuses:
+        return forbidden_response(request, "Для текущего статуса заказа у вашей роли нет допустимых переходов.")
+
+    return render_template(
+        request,
+        "form.html",
+        {
+            "title": f"Изменить статус заказа #{order_id}",
+            "action": f"/orders/{order_id}/status",
+            "fields": status_fields(statuses, statuses[0]["status_code"]),
+            "back_url": f"/orders/{order_id}",
+            "submit_label": "Обновить статус",
+        },
+    )
 
 
 @router.post("/orders/{order_id}/status")
 def order_status_update(request: Request, order_id: int, status_code: str = Form(...)):
-    user = authorize_section(request, "orders")
+    user = authorize_action(request, "orders.change_status", "У вас нет прав на изменение статуса заказа.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты не могут менять статусы заказов."}, status_code=403)
-    statuses = fetch_all("SELECT status_code, name FROM order_statuses ORDER BY name")
+
+    order = fetch_order_for_user(order_id, user)
+    if not order:
+        return render_template(request, "error.html", {"title": "Заказ не найден", "message": "Карточка заказа не найдена."}, status_code=404)
+
+    statuses = fetch_order_status_options(order, user)
     try:
+        new_status = clean_text(status_code)
+        if not new_status:
+            raise ValueError("Не выбран новый статус заказа.")
+        validate_order_status_change(order, new_status, user)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             with conn.cursor() as cur:
-                cur.execute("UPDATE customer_orders SET status_code = %s WHERE order_id = %s", (clean_text(status_code), order_id))
+                cur.execute("UPDATE customer_orders SET status_code = %s WHERE order_id = %s", (new_status, order_id))
         set_flash(request, "Статус заказа успешно обновлён.")
         return redirect_to(f"/orders/{order_id}")
     except (PsycopgError, ValueError) as exc:
-        return render_template(request, "form.html", {"title": f"Изменить статус заказа #{order_id}", "action": f"/orders/{order_id}/status", "fields": status_fields(statuses, status_code), "back_url": f"/orders/{order_id}", "submit_label": "Обновить статус", "error_message": str(exc)}, status_code=400)
+        fallback_status = clean_text(status_code) or order["status_code"]
+        return render_template(
+            request,
+            "form.html",
+            {
+                "title": f"Изменить статус заказа #{order_id}",
+                "action": f"/orders/{order_id}/status",
+                "fields": status_fields(statuses, fallback_status),
+                "back_url": f"/orders/{order_id}",
+                "submit_label": "Обновить статус",
+                "error_message": str(exc),
+            },
+            status_code=400,
+        )

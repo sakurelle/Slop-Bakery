@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
-from ..auth import authorize_section, redirect_to, render_template, set_flash
-from ..database import fetch_all, get_db, next_id
-from ..utils import build_options, clean_text, parse_date, parse_decimal
+from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
+from ..database import fetch_all, fetch_one, get_db, next_id
+from ..permissions import has_action
+from ..utils import build_options, clean_text, parse_date
 
 
 router = APIRouter()
@@ -15,7 +16,6 @@ def invoice_fields(orders, statuses, data=None):
         {"name": "order_id", "label": "Заказ", "type": "select", "required": True, "value": data.get("order_id", ""), "options": build_options(orders, "order_id", "display_name")},
         {"name": "issue_date", "label": "Дата выставления", "type": "date", "required": True, "value": data.get("issue_date", "")},
         {"name": "due_date", "label": "Срок оплаты", "type": "date", "value": data.get("due_date", "")},
-        {"name": "amount", "label": "Сумма", "type": "number", "required": True, "step": "0.01", "min": "0", "value": data.get("amount", "")},
         {"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": data.get("status_code", "issued"), "options": build_options(statuses, "status_code", "name")},
         {"name": "note", "label": "Примечание", "type": "textarea", "value": data.get("note", "")},
     ]
@@ -46,7 +46,7 @@ def invoices_list(request: Request):
     query += " ORDER BY i.issue_date DESC, i.invoice_id DESC"
     rows = fetch_all(query, params)
     for row in rows:
-        if "client" not in user.get("roles", []):
+        if has_action(user, "invoices.change_status"):
             row["_detail_url"] = f"/invoices/{row['invoice_id']}/status"
     context = {
         "title": "Счета",
@@ -63,7 +63,7 @@ def invoices_list(request: Request):
         ],
         "rows": rows,
     }
-    if "client" not in user.get("roles", []):
+    if has_action(user, "invoices.create"):
         context["create_url"] = "/invoices/new"
         context["create_label"] = "Создать счёт"
     return render_template(request, "table_list.html", context)
@@ -71,12 +71,10 @@ def invoices_list(request: Request):
 
 @router.get("/invoices/new")
 def invoice_new_page(request: Request):
-    user = authorize_section(request, "invoices")
+    user = authorize_action(request, "invoices.create", "У вас нет прав на создание счетов.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать счета."}, status_code=403)
-    orders = fetch_all("SELECT order_id, order_number || ' / ' || status_code AS display_name FROM customer_orders ORDER BY order_id DESC")
+    orders = fetch_all("SELECT order_id, order_number || ' / ' || status_code AS display_name FROM customer_orders WHERE status_code IN ('confirmed', 'in_production', 'ready', 'shipped', 'completed') ORDER BY order_id DESC")
     statuses = fetch_all("SELECT status_code, name FROM invoice_statuses ORDER BY name")
     return render_template(request, "form.html", {"title": "Создать счёт", "action": "/invoices/new", "fields": invoice_fields(orders, statuses), "back_url": "/invoices", "submit_label": "Создать счёт"})
 
@@ -87,23 +85,31 @@ def invoice_new(
     order_id: str = Form(...),
     issue_date: str = Form(...),
     due_date: str = Form(""),
-    amount: str = Form(...),
     status_code: str = Form(...),
     note: str = Form(""),
 ):
-    user = authorize_section(request, "invoices")
+    user = authorize_action(request, "invoices.create", "У вас нет прав на создание счетов.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать счета."}, status_code=403)
-    orders = fetch_all("SELECT order_id, order_number || ' / ' || status_code AS display_name FROM customer_orders ORDER BY order_id DESC")
+    orders = fetch_all("SELECT order_id, order_number || ' / ' || status_code AS display_name FROM customer_orders WHERE status_code IN ('confirmed', 'in_production', 'ready', 'shipped', 'completed') ORDER BY order_id DESC")
     statuses = fetch_all("SELECT status_code, name FROM invoice_statuses ORDER BY name")
-    form_data = {"order_id": order_id, "issue_date": issue_date, "due_date": due_date, "amount": amount, "status_code": status_code, "note": note}
+    form_data = {"order_id": order_id, "issue_date": issue_date, "due_date": due_date, "status_code": status_code, "note": note}
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             invoice_id = next_id(conn, "invoices", "invoice_id")
             invoice_number = f"INV-WEB-{invoice_id:04d}"
             with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COALESCE(SUM(line_amount), 0) AS total_amount
+                    FROM order_items
+                    WHERE order_id = %s
+                    """,
+                    (int(order_id),),
+                )
+                amount_row = cur.fetchone()
+                if amount_row is None:
+                    raise ValueError("Не удалось рассчитать сумму счёта.")
                 cur.execute(
                     """
                     INSERT INTO invoices (
@@ -117,12 +123,12 @@ def invoice_new(
                         int(order_id),
                         parse_date(issue_date, "Дата выставления"),
                         parse_date(due_date, "Срок оплаты", allow_none=True),
-                        parse_decimal(amount, "Сумма"),
+                        amount_row["total_amount"],
                         clean_text(status_code),
                         clean_text(note),
                     ),
                 )
-        set_flash(request, "Счёт успешно создан.")
+        set_flash(request, "Счёт успешно создан. Сумма рассчитана по позициям заказа.")
         return redirect_to("/invoices")
     except (PsycopgError, ValueError) as exc:
         return render_template(request, "form.html", {"title": "Создать счёт", "action": "/invoices/new", "fields": invoice_fields(orders, statuses, form_data), "back_url": "/invoices", "submit_label": "Создать счёт", "error_message": str(exc)}, status_code=400)
@@ -130,25 +136,21 @@ def invoice_new(
 
 @router.get("/invoices/{invoice_id}/status")
 def invoice_status_page(request: Request, invoice_id: int):
-    user = authorize_section(request, "invoices")
+    user = authorize_action(request, "invoices.change_status", "У вас нет прав на изменение статуса счёта.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать счета."}, status_code=403)
-    invoice = fetch_all("SELECT invoice_id, status_code FROM invoices WHERE invoice_id = %s", (invoice_id,))
+    invoice = fetch_one("SELECT invoice_id, status_code FROM invoices WHERE invoice_id = %s", (invoice_id,))
     if not invoice:
         return render_template(request, "error.html", {"title": "Счёт не найден", "message": "Карточка счёта не найдена."}, status_code=404)
     statuses = fetch_all("SELECT status_code, name FROM invoice_statuses ORDER BY name")
-    return render_template(request, "form.html", {"title": f"Изменить статус счёта #{invoice_id}", "action": f"/invoices/{invoice_id}/status", "fields": [{"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": invoice[0]['status_code'], "options": build_options(statuses, 'status_code', 'name')}], "back_url": "/invoices", "submit_label": "Обновить статус"})
+    return render_template(request, "form.html", {"title": f"Изменить статус счёта #{invoice_id}", "action": f"/invoices/{invoice_id}/status", "fields": [{"name": "status_code", "label": "Статус", "type": "select", "required": True, "value": invoice['status_code'], "options": build_options(statuses, 'status_code', 'name')}], "back_url": "/invoices", "submit_label": "Обновить статус"})
 
 
 @router.post("/invoices/{invoice_id}/status")
 def invoice_status_update(request: Request, invoice_id: int, status_code: str = Form(...)):
-    user = authorize_section(request, "invoices")
+    user = authorize_action(request, "invoices.change_status", "У вас нет прав на изменение статуса счёта.")
     if not isinstance(user, dict):
         return user
-    if "client" in user.get("roles", []):
-        return render_template(request, "error.html", {"title": "Доступ запрещён", "message": "Клиенты могут только просматривать счета."}, status_code=403)
     statuses = fetch_all("SELECT status_code, name FROM invoice_statuses ORDER BY name")
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:

@@ -3,7 +3,7 @@ from fastapi.responses import RedirectResponse
 from passlib.context import CryptContext
 
 from .database import fetch_one, get_db
-from .permissions import can_access, get_primary_role, get_role_label, visible_sections
+from .permissions import can_access, get_primary_role, get_role_label, has_action, visible_sections
 
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -209,6 +209,7 @@ def render_template(request: Request, template_name: str, context=None, status_c
         "nav_items": visible_sections(current_user),
         "flash": pop_flash(request),
         "can_access": can_access,
+        "has_action": has_action,
     }
     if context:
         payload.update(context)
@@ -233,4 +234,25 @@ def authorize_section(request: Request, section: str):
             },
             status_code=403,
         )
+    return user
+
+
+def forbidden_response(request: Request, message: str = "У вас нет прав для выполнения этого действия."):
+    return render_template(
+        request,
+        "error.html",
+        {
+            "title": "Доступ запрещён",
+            "message": message,
+        },
+        status_code=403,
+    )
+
+
+def authorize_action(request: Request, action: str, message: str | None = None):
+    user = get_current_user(request)
+    if not user:
+        return redirect_to("/login")
+    if not has_action(user, action):
+        return forbidden_response(request, message or "У вас нет прав для выполнения этого действия.")
     return user
