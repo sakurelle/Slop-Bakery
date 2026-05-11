@@ -29,14 +29,6 @@ from .routers import (
 settings = get_settings()
 app = FastAPI(title=settings.app_name)
 
-app.add_middleware(
-    SessionMiddleware,
-    secret_key=settings.secret_key,
-    session_cookie=settings.session_cookie,
-    same_site="lax",
-    https_only=False,
-)
-
 template_dir = Path(__file__).resolve().parent / "templates"
 static_dir = Path(__file__).resolve().parent / "static"
 app.state.templates = Jinja2Templates(directory=str(template_dir))
@@ -61,6 +53,13 @@ async def require_login_middleware(request: Request, call_next):
 
     return await call_next(request)
 
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.secret_key,
+    session_cookie=settings.session_cookie,
+    same_site="lax",
+    https_only=False,
+)
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
