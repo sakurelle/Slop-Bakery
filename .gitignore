@@ -1,0 +1,54 @@
+# OS temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+
+# IDE and editor files
+.idea/
+.vscode/
+*.iml
+*.suo
+*.user
+*.userossc
+*.sln.docstates
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+log/
+
+# Local environment files
+.env
+.env.local
+.env.*
+!.env.example
+configuration/.env
+configuration/.env.local
+
+# Database dumps and temporary exports
+*.dump
+*.sql.dump
+*.sql.tmp
+*.sql.bak
+*.backup
+*.bak
+
+# Caches and temporary folders
+.cache/
+cache/
+tmp/
+temp/
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Docker local/service files
+docker-compose.override.yml
+postgres_data/
+*.pid

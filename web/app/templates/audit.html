@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end mb-4 gap-3">
+    <div>
+        <h1 class="h2 mb-1">Audit Log</h1>
+        <p class="text-secondary mb-0">Database-triggered audit events for protected operations.</p>
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form action="/audit" method="get" class="row g-3">
+            <div class="col-md-3">
+                <label class="form-label">User</label>
+                <select class="form-select" name="user_id">
+                    {% for option in user_options %}
+                    <option value="{{ option.value }}" {% if user_id|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Table</label>
+                <select class="form-select" name="table_name">
+                    {% for option in table_options %}
+                    <option value="{{ option.value }}" {% if table_name|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Action</label>
+                <select class="form-select" name="action_type">
+                    {% for option in action_options %}
+                    <option value="{{ option.value }}" {% if action_type|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Date</label>
+                <input type="date" class="form-control" name="changed_date" value="{{ changed_date }}">
+            </div>
+            <div class="col-12">
+                <button type="submit" class="btn btn-bakery">Apply Filters</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>ID</th>
+                    <th>Changed At</th>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Table</th>
+                    <th>Record</th>
+                    <th>Success</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr>
+                    <td>{{ row.audit_id }}</td>
+                    <td>{{ row.changed_at }}</td>
+                    <td>{{ row.username }}</td>
+                    <td>{{ row.action_type }}</td>
+                    <td>{{ row.table_name }}</td>
+                    <td>{{ row.record_id }}</td>
+                    <td>{{ row.success }}</td>
+                </tr>
+                {% else %}
+                <tr><td colspan="7" class="text-secondary">No audit events match the selected filters.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

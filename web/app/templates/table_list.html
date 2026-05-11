@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end mb-4 gap-3">
+    <div>
+        <h1 class="h2 mb-1">{{ title }}</h1>
+        {% if subtitle %}<p class="text-secondary mb-0">{{ subtitle }}</p>{% endif %}
+    </div>
+    {% if create_url %}
+    <a href="{{ create_url }}" class="btn btn-bakery">{{ create_label or "Create" }}</a>
+    {% endif %}
+</div>
+
+{% if filters and filters.show_filters %}
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <form action="{{ filters.action }}" method="get" class="row g-3">
+            {% for field in filters.fields %}
+            <div class="col-md-4">
+                <label class="form-label">{{ field.label }}</label>
+                <select class="form-select" name="{{ field.name }}">
+                    {% for option in field.options %}
+                    <option value="{{ option.value }}" {% if field.value|string == option.value|string %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endfor %}
+            <div class="col-12">
+                <button type="submit" class="btn btn-bakery">Apply Filters</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<div class="card shadow-sm">
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead>
+                <tr>
+                    {% for _, label in headers %}
+                    <th>{{ label }}</th>
+                    {% endfor %}
+                    {% set has_row_actions = rows and rows[0]._detail_url is defined %}
+                    {% if has_row_actions %}
+                    <th class="text-end">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                <tr class="{{ row._row_class if row._row_class is defined else '' }}">
+                    {% for key, _ in headers %}
+                    <td>{{ row[key] }}</td>
+                    {% endfor %}
+                    {% if row._detail_url is defined %}
+                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Open</a></td>
+                    {% endif %}
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="{{ headers|length + (1 if has_row_actions else 0) }}" class="text-secondary">No records found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

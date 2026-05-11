@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start mb-4 gap-3">
+    <div>
+        <h1 class="h2 mb-1">{{ title }}</h1>
+    </div>
+    <div class="d-flex gap-2 flex-wrap">
+        {% if back_url %}<a href="{{ back_url }}" class="btn btn-outline-secondary">Back</a>{% endif %}
+        {% if edit_url %}<a href="{{ edit_url }}" class="btn btn-bakery">Edit</a>{% endif %}
+        {% for action in extra_actions or [] %}
+        <a href="{{ action.url }}" class="btn btn-outline-primary">{{ action.label }}</a>
+        {% endfor %}
+        {% for action in extra_forms or [] %}
+        <form action="{{ action.action }}" method="post" class="d-inline">
+            <button type="submit" class="btn {{ action.class or 'btn-outline-primary' }}">{{ action.label }}</button>
+        </form>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="card shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3">
+            {% for label, value in details %}
+            <div class="col-md-6">
+                <div class="detail-label">{{ label }}</div>
+                <div class="detail-value">{{ value }}</div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+{% for section in sections or [] %}
+<div class="card shadow-sm mb-4">
+    <div class="card-header"><strong>{{ section.title }}</strong></div>
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            {% set has_section_actions = section.rows and section.rows[0]._detail_url is defined %}
+            <thead>
+                <tr>
+                    {% for _, label in section.headers %}
+                    <th>{{ label }}</th>
+                    {% endfor %}
+                    {% if has_section_actions %}
+                    <th class="text-end">Actions</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in section.rows %}
+                <tr>
+                    {% for key, _ in section.headers %}
+                    <td>{{ row[key] }}</td>
+                    {% endfor %}
+                    {% if row._detail_url is defined %}
+                    <td class="text-end"><a href="{{ row._detail_url }}" class="btn btn-sm btn-outline-secondary">Open</a></td>
+                    {% endif %}
+                </tr>
+                {% else %}
+                <tr><td colspan="{{ section.headers|length + (1 if has_section_actions else 0) }}" class="text-secondary">{{ section.empty_message }}</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+{% endblock %}
