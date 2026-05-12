@@ -272,5 +272,49 @@ SELECT log_auth_event(1, 'LOGIN', '192.168.10.10', TRUE);
 SELECT log_auth_event(1, 'LOGOUT', '192.168.10.10', TRUE);
 SELECT log_auth_event(5, 'LOGIN', '192.168.10.25', TRUE);
 
+DO $$
+DECLARE
+    seq_table RECORD;
+BEGIN
+    FOR seq_table IN
+        SELECT *
+        FROM (
+            VALUES
+                ('customers', 'customer_id'),
+                ('suppliers', 'supplier_id'),
+                ('raw_materials', 'material_id'),
+                ('users', 'user_id'),
+                ('roles', 'role_id'),
+                ('role_permissions', 'permission_id'),
+                ('supplier_materials', 'supplier_material_id'),
+                ('raw_material_deliveries', 'delivery_id'),
+                ('delivery_items', 'delivery_item_id'),
+                ('raw_material_stock', 'stock_id'),
+                ('products', 'product_id'),
+                ('tech_cards', 'tech_card_id'),
+                ('recipe_items', 'recipe_item_id'),
+                ('customer_orders', 'order_id'),
+                ('order_items', 'order_item_id'),
+                ('production_batches', 'production_batch_id'),
+                ('finished_goods_stock', 'finished_stock_id'),
+                ('quality_checks', 'quality_check_id'),
+                ('invoices', 'invoice_id'),
+                ('supplier_invoices', 'supplier_invoice_id'),
+                ('shipments', 'shipment_id'),
+                ('shipment_items', 'shipment_item_id'),
+                ('audit_log', 'audit_id')
+        ) AS sequences(table_name, id_column)
+    LOOP
+        EXECUTE FORMAT(
+            'SELECT setval(pg_get_serial_sequence(%L, %L), COALESCE((SELECT MAX(%I) FROM %I), 1), TRUE)',
+            seq_table.table_name,
+            seq_table.id_column,
+            seq_table.id_column,
+            seq_table.table_name
+        );
+    END LOOP;
+END;
+$$;
+
 SELECT set_config('app.current_user_id', '', false);
 SELECT set_config('app.current_user_ip', '', false);

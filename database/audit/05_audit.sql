@@ -11,7 +11,6 @@ DECLARE
     record_id_parts TEXT[] := ARRAY[]::TEXT[];
     key_name TEXT;
     key_value TEXT;
-    next_audit_id BIGINT;
     idx INTEGER;
 BEGIN
     actor_user_id := NULLIF(current_setting('app.current_user_id', true), '')::BIGINT;
@@ -37,12 +36,7 @@ BEGIN
         END LOOP;
     END IF;
 
-    SELECT COALESCE(MAX(audit_id) + 1, 1)
-    INTO next_audit_id
-    FROM audit_log;
-
     INSERT INTO audit_log (
-        audit_id,
         user_id,
         action_type,
         table_name,
@@ -54,7 +48,6 @@ BEGIN
         success
     )
     VALUES (
-        next_audit_id,
         actor_user_id,
         TG_OP,
         TG_TABLE_NAME,
@@ -79,19 +72,12 @@ CREATE OR REPLACE FUNCTION log_auth_event(
 RETURNS VOID
 LANGUAGE plpgsql
 AS $$
-DECLARE
-    next_audit_id BIGINT;
 BEGIN
     IF p_action_type NOT IN ('LOGIN', 'LOGOUT') THEN
         RAISE EXCEPTION 'Unsupported auth audit action type: %', p_action_type;
     END IF;
 
-    SELECT COALESCE(MAX(audit_id) + 1, 1)
-    INTO next_audit_id
-    FROM audit_log;
-
     INSERT INTO audit_log (
-        audit_id,
         user_id,
         action_type,
         table_name,
@@ -103,7 +89,6 @@ BEGIN
         success
     )
     VALUES (
-        next_audit_id,
         p_user_id,
         p_action_type,
         'users',

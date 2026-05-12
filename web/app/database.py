@@ -73,9 +73,11 @@ def execute(query: str, params=None, user_id=None, user_ip=None) -> int:
 
 
 def next_id(conn, table_name: str, id_column: str) -> int:
-    statement = sql.SQL("SELECT COALESCE(MAX({id_column}) + 1, 1) AS next_id FROM {table_name}").format(
-        id_column=sql.Identifier(id_column),
-        table_name=sql.Identifier(table_name),
+    statement = sql.SQL(
+        "SELECT nextval(pg_get_serial_sequence({table_name}, {id_column})) AS next_id"
+    ).format(
+        id_column=sql.Literal(id_column),
+        table_name=sql.Literal(table_name),
     )
     with conn.cursor() as cur:
         cur.execute(statement)
