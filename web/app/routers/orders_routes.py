@@ -4,7 +4,7 @@ from fastapi import APIRouter, Form, Query, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_date, parse_decimal, parse_int
 
@@ -402,19 +402,27 @@ def order_new(
     try:
         customer_value = user["customer_id"] if is_client_user else parse_int(customer_id, "Клиент")
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            order_id = next_id(conn, "customer_orders", "order_id")
-            order_number = f"ORD-WEB-{order_id:04d}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
+                    WITH new_order AS (
+                        SELECT nextval(pg_get_serial_sequence('customer_orders', 'order_id')) AS order_id
+                    )
                     INSERT INTO customer_orders (
                         order_id, order_number, customer_id, planned_shipment_date, status_code, created_by_user_id, comment
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    SELECT
+                        new_order.order_id,
+                        'ORD-WEB-' || LPAD(new_order.order_id::TEXT, 4, '0'),
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    FROM new_order
+                    RETURNING order_id
                     """,
                     (
-                        order_id,
-                        order_number,
                         customer_value,
                         parse_date(planned_shipment_date, "Плановая дата отгрузки", allow_none=True),
                         "draft",
@@ -422,6 +430,7 @@ def order_new(
                         clean_text(comment),
                     ),
                 )
+                order_id = cur.fetchone()["order_id"]
         set_flash(request, "Заказ создан со статусом «Черновик». Теперь можно добавить его позиции.")
         return redirect_to(f"/orders/{order_id}")
     except ValueError as exc:
@@ -551,7 +560,6 @@ def order_item_new(
         product_id_value = parse_int(product_id, "Продукция")
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            order_item_id = next_id(conn, "order_items", "order_item_id")
             with conn.cursor() as cur:
                 product = get_product_for_order(conn, product_id_value)
                 if not product:
@@ -599,12 +607,11 @@ def order_item_new(
                     cur.execute(
                         """
                         INSERT INTO order_items (
-                            order_item_id, order_id, product_id, quantity, unit_price, line_amount
+                            order_id, product_id, quantity, unit_price, line_amount
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s)
                         """,
                         (
-                            order_item_id,
                             order_id,
                             product_id_value,
                             quantity_value,

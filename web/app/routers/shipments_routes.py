@@ -5,7 +5,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_datetime_local, parse_decimal, parse_int
 
@@ -297,8 +297,6 @@ def shipment_new(
         order_id_value = parse_int(order_id, "Заказ")
         shipped_at_value = parse_datetime_local(shipped_at, "Дата отгрузки", allow_none=True)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            shipment_id = next_id(conn, "shipments", "shipment_id")
-            shipment_number = f"SHP-WEB-{shipment_id:04d}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -319,15 +317,27 @@ def shipment_new(
                     raise ValueError("Дата отгрузки не может быть раньше даты заказа.")
                 cur.execute(
                     """
+                    WITH new_shipment AS (
+                        SELECT nextval(pg_get_serial_sequence('shipments', 'shipment_id')) AS shipment_id
+                    )
                     INSERT INTO shipments (
                         shipment_id, shipment_number, order_id, shipped_at, status_code,
                         delivery_address, waybill_number, created_by_user_id, note
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    SELECT
+                        new_shipment.shipment_id,
+                        'SHP-WEB-' || LPAD(new_shipment.shipment_id::TEXT, 4, '0'),
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    FROM new_shipment
+                    RETURNING shipment_id
                     """,
                     (
-                        shipment_id,
-                        shipment_number,
                         order_id_value,
                         shipped_at_value,
                         "planned",
@@ -337,6 +347,7 @@ def shipment_new(
                         clean_text(note),
                     ),
                 )
+                shipment_id = cur.fetchone()["shipment_id"]
         set_flash(request, "Отгрузка создана со статусом «Запланирована». Теперь можно добавить её состав.")
         return redirect_to(f"/shipments/{shipment_id}")
     except ValueError as exc:
@@ -470,7 +481,6 @@ def shipment_item_new(
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             ensure_order_paid_for_shipping(conn, shipment["order_id"])
-            shipment_item_id = next_id(conn, "shipment_items", "shipment_item_id")
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -524,12 +534,11 @@ def shipment_item_new(
                 cur.execute(
                     """
                     INSERT INTO shipment_items (
-                        shipment_item_id, shipment_id, order_item_id, product_id, finished_stock_id, quantity
+                        shipment_id, order_item_id, product_id, finished_stock_id, quantity
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s)
                     """,
                     (
-                        shipment_item_id,
                         shipment_id,
                         order_item_id_value,
                         order_item["product_id"],

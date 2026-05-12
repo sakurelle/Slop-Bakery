@@ -4,7 +4,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_bool, parse_date, parse_decimal, parse_int
 
@@ -141,16 +141,14 @@ def sync_delivery_stock(conn, delivery_id: int) -> int:
 
         created_count = 0
         for item in missing_stock_items:
-            stock_id = next_id(conn, "raw_material_stock", "stock_id")
             cur.execute(
                 """
                 INSERT INTO raw_material_stock (
-                    stock_id, material_id, delivery_item_id, batch_number, quantity_current, expiry_date
+                    material_id, delivery_item_id, batch_number, quantity_current, expiry_date
                 )
-                VALUES (%s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
                 (
-                    stock_id,
                     item["material_id"],
                     item["delivery_item_id"],
                     item["batch_number"],
@@ -262,10 +260,12 @@ def create_supplier_invoice_for_delivery(conn, delivery_id: int) -> int | None:
             raise ValueError("Нельзя создать счёт для поставки без позиций.")
 
     recalculate_delivery_total(conn, delivery_id)
-    supplier_invoice_id = next_id(conn, "supplier_invoices", "supplier_invoice_id")
     with conn.cursor() as cur:
         cur.execute(
             """
+            WITH new_invoice AS (
+                SELECT nextval(pg_get_serial_sequence('supplier_invoices', 'supplier_invoice_id')) AS supplier_invoice_id
+            )
             INSERT INTO supplier_invoices (
                 supplier_invoice_id,
                 supplier_invoice_number,
@@ -279,9 +279,9 @@ def create_supplier_invoice_for_delivery(conn, delivery_id: int) -> int | None:
                 document_ref,
                 note
             )
-            VALUES (
-                %s,
-                %s,
+            SELECT
+                new_invoice.supplier_invoice_id,
+                'SINV-WEB-' || LPAD(new_invoice.supplier_invoice_id::TEXT, 4, '0'),
                 %s,
                 %s,
                 CURRENT_DATE,
@@ -291,11 +291,10 @@ def create_supplier_invoice_for_delivery(conn, delivery_id: int) -> int | None:
                 'issued',
                 %s,
                 %s
-            )
+            FROM new_invoice
+            RETURNING supplier_invoice_id
             """,
             (
-                supplier_invoice_id,
-                f"SINV-WEB-{supplier_invoice_id:04d}",
                 delivery_id,
                 delivery["supplier_id"],
                 totals["total_amount"],
@@ -303,6 +302,7 @@ def create_supplier_invoice_for_delivery(conn, delivery_id: int) -> int | None:
                 f"Счёт создан автоматически по поставке {delivery['delivery_number']}.",
             ),
         )
+        supplier_invoice_id = cur.fetchone()["supplier_invoice_id"]
     return supplier_invoice_id
 
 @router.get("/materials")
@@ -374,17 +374,15 @@ def material_new(
     form_data = {"name": name, "unit": unit, "min_stock_qty": min_stock_qty, "shelf_life_days": shelf_life_days, "storage_conditions": storage_conditions, "is_active": parse_bool(is_active)}
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            material_id = next_id(conn, "raw_materials", "material_id")
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO raw_materials (
-                        material_id, name, unit, min_stock_qty, shelf_life_days, storage_conditions, is_active
+                        name, unit, min_stock_qty, shelf_life_days, storage_conditions, is_active
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        material_id,
                         clean_text(name),
                         clean_text(unit),
                         parse_decimal(min_stock_qty, "ÐœÐ¸Ð½Ð¸Ð¼Ð°Ð»ÑŒÐ½Ñ‹Ð¹ Ð¾ÑÑ‚Ð°Ñ‚Ð¾Ðº"),
@@ -569,21 +567,31 @@ def delivery_new(
     form_data = {"supplier_id": supplier_id, "delivery_date": delivery_date, "document_ref": document_ref, "note": note}
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            delivery_id = next_id(conn, "raw_material_deliveries", "delivery_id")
-            delivery_number = f"DN-WEB-{delivery_id:04d}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
+                    WITH new_delivery AS (
+                        SELECT nextval(pg_get_serial_sequence('raw_material_deliveries', 'delivery_id')) AS delivery_id
+                    )
                     INSERT INTO raw_material_deliveries (
                         delivery_id, supplier_id, delivery_number, delivery_date, status_code,
                         received_by_user_id, document_ref, total_amount, note
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    SELECT
+                        new_delivery.delivery_id,
+                        %s,
+                        'DN-WEB-' || LPAD(new_delivery.delivery_id::TEXT, 4, '0'),
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    FROM new_delivery
+                    RETURNING delivery_id
                     """,
                     (
-                        delivery_id,
                         parse_int(supplier_id, "ÐŸÐ¾ÑÑ‚Ð°Ð²Ñ‰Ð¸Ðº"),
-                        delivery_number,
                         parse_date(delivery_date, "Ð”Ð°Ñ‚Ð° Ð¿Ð¾ÑÑ‚Ð°Ð²ÐºÐ¸"),
                         "planned",
                         user["user_id"],
@@ -592,6 +600,7 @@ def delivery_new(
                         clean_text(note),
                     ),
                 )
+                delivery_id = cur.fetchone()["delivery_id"]
         set_flash(request, "ÐŸÐ¾ÑÑ‚Ð°Ð²ÐºÐ° ÑÐ¾Ð·Ð´Ð°Ð½Ð° ÑÐ¾ ÑÑ‚Ð°Ñ‚ÑƒÑÐ¾Ð¼ Â«Ð—Ð°Ð¿Ð»Ð°Ð½Ð¸Ñ€Ð¾Ð²Ð°Ð½Ð°Â». Ð¢ÐµÐ¿ÐµÑ€ÑŒ Ð¼Ð¾Ð¶Ð½Ð¾ Ð´Ð¾Ð±Ð°Ð²Ð¸Ñ‚ÑŒ ÐµÑ‘ Ð¿Ð¾Ð·Ð¸Ñ†Ð¸Ð¸.")
         return redirect_to(f"/deliveries/{delivery_id}")
     except ValueError as exc:
@@ -724,16 +733,15 @@ def delivery_item_new(
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             unit_price_value = validate_supplier_material(conn, delivery["supplier_id"], material_id_value)
-            delivery_item_id = next_id(conn, "delivery_items", "delivery_item_id")
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO delivery_items (
-                        delivery_item_id, delivery_id, material_id, quantity, unit_price, batch_number, expiry_date
+                        delivery_id, material_id, quantity, unit_price, batch_number, expiry_date
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (delivery_item_id, delivery_id, material_id_value, quantity_value, unit_price_value, batch_value, expiry_date_value),
+                    (delivery_id, material_id_value, quantity_value, unit_price_value, batch_value, expiry_date_value),
                 )
             recalculate_delivery_total(conn, delivery_id)
         set_flash(request, "Позиция поставки успешно добавлена. Цена зафиксирована по данным поставщика.")

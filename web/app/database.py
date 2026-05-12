@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 
-from psycopg import connect, sql
+from psycopg import connect
 from psycopg.rows import dict_row
 
 from .config import get_settings
@@ -71,15 +71,3 @@ def execute(query: str, params=None, user_id=None, user_ip=None) -> int:
             cur.execute(query, params or ())
             return cur.rowcount
 
-
-def next_id(conn, table_name: str, id_column: str) -> int:
-    statement = sql.SQL(
-        "SELECT nextval(pg_get_serial_sequence({table_name}, {id_column})) AS next_id"
-    ).format(
-        id_column=sql.Literal(id_column),
-        table_name=sql.Literal(table_name),
-    )
-    with conn.cursor() as cur:
-        cur.execute(statement)
-        row = cur.fetchone()
-        return row["next_id"]

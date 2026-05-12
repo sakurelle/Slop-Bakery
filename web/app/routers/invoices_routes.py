@@ -2,7 +2,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_date
 
@@ -226,8 +226,6 @@ def invoice_new(
         issue_date_value = parse_date(issue_date, "Дата выставления")
         due_date_value = parse_date(due_date, "Срок оплаты", allow_none=True)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            invoice_id = next_id(conn, "invoices", "invoice_id")
-            invoice_number = f"INV-WEB-{invoice_id:04d}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -272,14 +270,24 @@ def invoice_new(
 
                 cur.execute(
                     """
+                    WITH new_invoice AS (
+                        SELECT nextval(pg_get_serial_sequence('invoices', 'invoice_id')) AS invoice_id
+                    )
                     INSERT INTO invoices (
                         invoice_id, invoice_number, order_id, issue_date, due_date, amount, status_code, note
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    SELECT
+                        new_invoice.invoice_id,
+                        'INV-WEB-' || LPAD(new_invoice.invoice_id::TEXT, 4, '0'),
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    FROM new_invoice
                     """,
                     (
-                        invoice_id,
-                        invoice_number,
                         order_id_value,
                         issue_date_value,
                         due_date_value,

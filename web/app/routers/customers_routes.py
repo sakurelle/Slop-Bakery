@@ -2,7 +2,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_section, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..utils import clean_text, parse_bool
 
 
@@ -130,12 +130,10 @@ def customer_create(
 
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            customer_id = next_id(conn, "customers", "customer_id")
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO customers (
-                        customer_id,
                         customer_type,
                         full_name,
                         company_name,
@@ -144,10 +142,9 @@ def customer_create(
                         delivery_address,
                         is_active
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        customer_id,
                         clean_text(customer_type),
                         clean_text(full_name),
                         clean_text(company_name),

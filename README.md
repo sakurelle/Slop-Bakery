@@ -245,3 +245,37 @@ docker compose --env-file configuration/.env -f configuration/docker-compose.yml
 - `docs/database-structure/database_structure.md` — структура таблиц.
 - `docs/access-control/roles_and_permissions.md` — логические и SQL-роли.
 - `docs/audit/audit_description.md` — описание аудита.
+
+## Row-Level Security
+
+Клиентские данные дополнительно защищены на уровне PostgreSQL через `database/security/06_row_level_security.sql`. Политики RLS включены для `customer_orders`, `order_items`, `invoices`, `shipments` и `shipment_items` и используют session variable `app.current_user_id`, которую приложение устанавливает в `web/app/database.py`. Клиент видит только записи, связанные с его `users.customer_id`, а роли администратора, технолога, склада и контроля качества сохраняют необходимые права.
+
+Файл RLS подключен в общий сценарий `database/initialization/99_run_all.sql` после seed-данных и до проверочных запросов.
+
+## Резервное копирование
+
+Для логического резервного копирования PostgreSQL добавлен скрипт:
+
+```bash
+./scripts/backup_db.sh
+```
+
+Скрипт использует `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, создает каталог `backups` и сохраняет дамп с именем `bakery_YYYYMMDD_HHMMSS.sql`. Подробная стратегия описана в `docs/security/backup_strategy.md`.
+
+## Восстановление БД
+
+Для восстановления SQL-дампа используется:
+
+```bash
+FORCE_RESTORE=1 ./scripts/restore_db.sh backups/<file>.sql
+```
+
+Без `FORCE_RESTORE=1` скрипт запрашивает подтверждение, потому что восстановление изменяет состояние БД.
+
+## Модель угроз
+
+Модель угроз программной части находится в `docs/security/threat_model.md`. В ней перечислены угрозы несанкционированного доступа, SQL-инъекций, превышения полномочий, просмотра чужих заказов клиентом, сбоев БД, утечки резервных копий и меры, реально реализованные в проекте.
+
+## Проверочные SQL-запросы
+
+Файл `database/checks/07_test_queries.sql` содержит формальные разделы запросов для демонстрации: безопасный ввод данных, выборку с сортировкой, `DISTINCT`, константы и выражения, `GROUP BY`/`ORDER BY`, агрегатные функции, функции даты, строковые функции, предметные проверки и запросы по безопасности и аудиту.

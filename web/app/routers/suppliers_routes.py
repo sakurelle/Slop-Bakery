@@ -2,7 +2,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, render_template, redirect_to, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_bool, parse_decimal, parse_int
 
@@ -129,17 +129,15 @@ def supplier_new(
     }
     try:
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            supplier_id = next_id(conn, "suppliers", "supplier_id")
             with conn.cursor() as cur:
                 cur.execute(
                     """
                     INSERT INTO suppliers (
-                        supplier_id, company_name, contact_person, phone, email, address, is_active
+                        company_name, contact_person, phone, email, address, is_active
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        supplier_id,
                         clean_text(company_name),
                         clean_text(contact_person),
                         clean_text(phone),
@@ -407,16 +405,14 @@ def supplier_material_new(
                     )
                     set_flash(request, "Поставляемое сырьё уже закреплено, данные обновлены.")
                 else:
-                    supplier_material_id = next_id(conn, "supplier_materials", "supplier_material_id")
                     cur.execute(
                         """
                         INSERT INTO supplier_materials (
-                            supplier_material_id, supplier_id, material_id, purchase_price, lead_time_days, is_active
+                            supplier_id, material_id, purchase_price, lead_time_days, is_active
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s)
                         """,
                         (
-                            supplier_material_id,
                             supplier_id,
                             material_id_value,
                             purchase_price_value,

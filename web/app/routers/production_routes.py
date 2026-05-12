@@ -5,7 +5,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, forbidden_response, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_datetime_local, parse_decimal, parse_int
 
@@ -307,19 +307,17 @@ def finalize_production_batch(conn, batch: dict, tech_card: dict):
     consume_materials_for_production(conn, batch["tech_card_id"], produced_qty, production_day)
 
     if net_quantity > 0:
-        finished_stock_id = next_id(conn, "finished_goods_stock", "finished_stock_id")
         expiry_dt = production_day + timedelta(days=tech_card["shelf_life_days"])
         with conn.cursor() as cur:
             cur.execute(
                 """
                 INSERT INTO finished_goods_stock (
-                    finished_stock_id, product_id, production_batch_id, batch_number,
+                    product_id, production_batch_id, batch_number,
                     quantity_current, production_date, expiry_date
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                 (
-                    finished_stock_id,
                     batch["product_id"],
                     batch["production_batch_id"],
                     batch["batch_number"],
@@ -440,20 +438,32 @@ def production_new(
             if status_value in {"in_progress", "completed"}:
                 consume_materials_for_production(conn, tech_card_id_value, produced_qty, production_dt.date(), apply_changes=False)
 
-            production_batch_id = next_id(conn, "production_batches", "production_batch_id")
-            batch_number = f"PB-WEB-{production_batch_id:04d}"
             with conn.cursor() as cur:
                 cur.execute(
                     """
+                    WITH new_batch AS (
+                        SELECT nextval(pg_get_serial_sequence('production_batches', 'production_batch_id')) AS production_batch_id
+                    )
                     INSERT INTO production_batches (
                         production_batch_id, batch_number, product_id, tech_card_id, production_date,
                         shift, quantity_produced, quantity_defective, responsible_user_id, status_code, note
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    SELECT
+                        new_batch.production_batch_id,
+                        'PB-WEB-' || LPAD(new_batch.production_batch_id::TEXT, 4, '0'),
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s,
+                        %s
+                    FROM new_batch
+                    RETURNING production_batch_id, batch_number
                     """,
                     (
-                        production_batch_id,
-                        batch_number,
                         product_id_value,
                         tech_card_id_value,
                         production_dt,
@@ -465,6 +475,9 @@ def production_new(
                         clean_text(note),
                     ),
                 )
+                created_batch = cur.fetchone()
+                production_batch_id = created_batch["production_batch_id"]
+                batch_number = created_batch["batch_number"]
 
             if status_value == "completed":
                 finalize_production_batch(

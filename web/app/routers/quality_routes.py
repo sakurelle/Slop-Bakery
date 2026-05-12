@@ -2,7 +2,7 @@ from fastapi import APIRouter, Form, Query, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
-from ..database import fetch_all, get_db, next_id
+from ..database import fetch_all, get_db
 from ..permissions import has_action
 from ..utils import build_options, clean_text, parse_datetime_local, parse_int
 
@@ -242,7 +242,6 @@ def quality_new(
 
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
             validate_inspector(conn, inspector_user_id_value)
-            quality_check_id = next_id(conn, "quality_checks", "quality_check_id")
             with conn.cursor() as cur:
                 if delivery_item_id_value is not None:
                     cur.execute("SELECT 1 FROM delivery_items WHERE delivery_item_id = %s", (delivery_item_id_value,))
@@ -256,14 +255,13 @@ def quality_new(
                 cur.execute(
                     """
                     INSERT INTO quality_checks (
-                        quality_check_id, check_type, delivery_item_id, production_batch_id, checked_at,
+                        check_type, delivery_item_id, production_batch_id, checked_at,
                         inspector_user_id, result_code, parameter_name, measured_value,
                         standard_value, document_number, note
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        quality_check_id,
                         check_type_value,
                         delivery_item_id_value,
                         production_batch_id_value,

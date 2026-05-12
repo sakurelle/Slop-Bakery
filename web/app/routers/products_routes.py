@@ -2,7 +2,7 @@ from fastapi import APIRouter, Form, Request
 from psycopg import Error as PsycopgError
 
 from ..auth import authorize_action, authorize_section, redirect_to, render_template, set_flash
-from ..database import fetch_all, fetch_one, get_db, next_id
+from ..database import fetch_all, fetch_one, get_db
 from ..permissions import has_action
 from ..utils import clean_text, parse_bool, parse_decimal, parse_int
 
@@ -122,14 +122,13 @@ def product_new(
         product_price = parse_decimal(price, "Цена")
         shelf_life = parse_int(shelf_life_days, "Срок годности")
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            product_id = next_id(conn, "products", "product_id")
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO products (product_id, name, category, unit, price, shelf_life_days, is_active)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO products (name, category, unit, price, shelf_life_days, is_active)
+                    VALUES (%s, %s, %s, %s, %s, %s)
                     """,
-                    (product_id, clean_text(name), clean_text(category), clean_text(unit), product_price, shelf_life, parse_bool(is_active)),
+                    (clean_text(name), clean_text(category), clean_text(unit), product_price, shelf_life, parse_bool(is_active)),
                 )
         set_flash(request, "Продукция успешно добавлена.")
         return redirect_to("/products")
