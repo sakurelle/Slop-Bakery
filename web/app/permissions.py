@@ -86,7 +86,7 @@ NAV_ITEMS = [
     {"section": "production", "label": "Производство", "path": "/production"},
     {"section": "finished_stock", "label": "Готовая продукция", "path": "/finished-stock"},
     {"section": "quality", "label": "Качество", "path": "/quality"},
-    {"section": "invoices", "label": "Счета клиентов", "path": "/invoices"},
+    {"section": "invoices", "label": "Счета", "path": "/invoices"},
     {"section": "supplier_invoices", "label": "Счета поставщиков", "path": "/supplier-invoices"},
     {"section": "shipments", "label": "Отгрузки", "path": "/shipments"},
     {"section": "reports", "label": "Отчёты", "path": "/reports"},

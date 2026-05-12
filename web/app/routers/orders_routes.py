@@ -257,6 +257,25 @@ def ensure_order_shipment_coverage(conn, order_id: int, shipment_statuses: tuple
             raise ValueError(error_message)
 
 
+def ensure_order_has_delivered_shipment(conn, order_id: int) -> None:
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT 1
+            FROM shipments AS s
+            WHERE s.order_id = %s
+              AND s.status_code = 'delivered'
+            LIMIT 1
+            """,
+            (order_id,),
+        )
+        if not cur.fetchone():
+            raise ValueError(
+                "Заказ нельзя завершить, пока связанная отгрузка не имеет статус "
+                "«Доставлена». Перейдите в раздел «Отгрузки» и обновите статус отгрузки."
+            )
+
+
 @router.get("/orders")
 def orders_list(
     request: Request,
@@ -473,6 +492,26 @@ def order_detail(request: Request, order_id: int):
         """,
         (order_id,),
     )
+    shipments = fetch_all(
+        """
+        SELECT
+            shipment_id,
+            shipment_number,
+            shipped_at,
+            status_code,
+            delivery_address
+        FROM shipments
+        WHERE order_id = %s
+        ORDER BY shipment_id
+        """,
+        (order_id,),
+    )
+    for shipment in shipments:
+        shipment["_detail_url"] = f"/shipments/{shipment['shipment_id']}"
+        if has_action(user, "shipments.change_status") and shipment["status_code"] in {"planned", "shipped"}:
+            shipment["_row_actions"] = [
+                {"label": "Изменить статус", "url": f"/shipments/{shipment['shipment_id']}/status"}
+            ]
 
     extra_actions = []
     if has_action(user, "orders.add_item") and order["status_code"] == "draft":
@@ -501,6 +540,12 @@ def order_detail(request: Request, order_id: int):
                     "headers": [("order_item_id", "ID"), ("product_name", "Продукция"), ("quantity", "Количество"), ("unit_price", "Цена за ед."), ("line_amount", "Сумма")],
                     "rows": items,
                     "empty_message": "Позиции заказа ещё не добавлены.",
+                },
+                {
+                    "title": "Связанные отгрузки",
+                    "headers": [("shipment_number", "Отгрузка"), ("shipped_at", "Дата"), ("status_code", "Статус"), ("delivery_address", "Адрес")],
+                    "rows": shipments,
+                    "empty_message": "Для заказа ещё нет отгрузок.",
                 }
             ],
         },
@@ -690,7 +735,7 @@ def order_status_update(request: Request, order_id: int, status_code: str = Form
                 ensure_paid_invoice_for_order(conn, order_id)
                 ensure_order_shipment_coverage(conn, order_id, ("shipped", "delivered"), "Заказ нельзя отгрузить: отгрузка не покрывает все позиции заказа.")
             elif new_status == "completed":
-                ensure_order_shipment_coverage(conn, order_id, ("delivered",), "Заказ нельзя завершить: отгрузка ещё не доставлена полностью.")
+                ensure_order_has_delivered_shipment(conn, order_id)
 
             with conn.cursor() as cur:
                 cur.execute("UPDATE customer_orders SET status_code = %s WHERE order_id = %s", (new_status, order_id))

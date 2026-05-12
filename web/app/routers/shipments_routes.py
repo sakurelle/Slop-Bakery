@@ -619,8 +619,10 @@ def shipment_status_update(request: Request, shipment_id: int, status_code: str 
             raise ValueError("Не выбран новый статус отгрузки.")
         validate_shipment_status_change(shipment, new_status)
         with get_db(user_id=user["user_id"], user_ip=request.client.host if request.client else None) as conn:
-            if new_status in {"shipped", "delivered"}:
+            if new_status == "shipped":
                 ensure_order_paid_for_shipping(conn, shipment["order_id"])
+                ensure_shipment_has_items(conn, shipment_id)
+            elif new_status == "delivered":
                 ensure_shipment_has_items(conn, shipment_id)
 
             with conn.cursor() as cur:
